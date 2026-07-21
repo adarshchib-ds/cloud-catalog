@@ -35,23 +35,26 @@ jobs:
           node-version: 22
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: Install Dependencies
-        run: pnpm install 
+        run: pnpm install --no-frozen-lockfile
 
       - name: Generate Prisma Client
         run: pnpm run prisma:generate
         env:
           DATABASE_URL: postgresql://cloud_catalog_user:cloud_catalog_password@localhost:5432/cloud_catalog?schema=public
 
-      - name: Check Formatting & Types
-        run: |
-          pnpm run format:check
-          pnpm run lint
-          pnpm run type-check
+      - name: Prettier Format Check
+        run: pnpm run format:check
+
+      - name: ESLint Code Quality Check
+        run: pnpm run lint
+
+      - name: TypeScript Type Check
+        run: pnpm run type-check
 
       - name: Build Production Bundle (dist/)
         run: pnpm run build
