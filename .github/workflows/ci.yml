@@ -1,0 +1,57 @@
+name: Cloud Catalog CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: cloud_catalog_user
+          POSTGRES_PASSWORD: cloud_catalog_password
+          POSTGRES_DB: cloud_catalog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm run prisma:generate
+        env:
+          DATABASE_URL: postgresql://cloud_catalog_user:cloud_catalog_password@localhost:5432/cloud_catalog?schema=public
+
+      - name: Check Formatting & Types
+        run: |
+          pnpm run format:check
+          pnpm run lint
+          pnpm run type-check
+
+      - name: Build Production Bundle (dist/)
+        run: pnpm run build

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud Catalog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/docs/dashboard.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">CC</div>
+      <div class="logo-text">Cloud Catalog</div>
+    </div>
+    <div class="header-pills">
+      <span class="pill pill-aws">AWS</span>
+      <span class="pill pill-azure">Azure</span>
+      <span class="pill pill-gcp">GCP</span>
+    </div>
+    <div class="header-stats">
+      <div class="stat"><div class="stat-num" id="stat-total">--</div><div class="stat-lbl">Instances</div></div>
+      <div class="stat"><div class="stat-num" id="stat-gpu">--</div><div class="stat-lbl">GPU</div></div>
+      <div class="stat"><div class="stat-num" id="stat-showing">--</div><div class="stat-lbl">Showing</div></div>
+    </div>
+    <button id="theme-toggle" class="theme-toggle-btn" onclick="toggleTheme()" aria-label="Toggle theme">
+      <!-- Sun icon -->
+      <svg id="theme-icon-sun" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      <!-- Moon icon -->
+      <svg id="theme-icon-moon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+    </button>
+  </div>
+</header>
+
+<nav class="tabnav">
+  <div class="tabnav-inner">
+    <button class="tab-btn active" id="tab-dict" onclick="switchTab('dict')">Instance Dictionary</button>
+    <button class="tab-btn" id="tab-calc" onclick="switchTab('calc')">Instance Calculator</button>
+    <button class="tab-btn" id="tab-recommend" onclick="switchTab('recommend')">Smart Recommendation</button>
+  </div>
+</nav>
+
+<!-- ═══ DICTIONARY ═══ -->
+<div class="tab-panel active" id="panel-dict">
+  <div class="container">
+    <div class="summary-bar">
+      <div class="summary-card"><div class="summary-num" id="sn-total">--</div><div class="summary-lbl">Total Instances</div></div>
+      <div class="summary-card"><div class="summary-num">3</div><div class="summary-lbl">Providers</div></div>
+      <div class="summary-card"><div class="summary-num" id="sn-gpu">--</div><div class="summary-lbl">GPU Instances</div></div>
+      <div class="summary-card"><div class="summary-num" id="sn-showing">--</div><div class="summary-lbl">Showing</div></div>
+    </div>
+
+    <div class="controls">
+      <div class="search-wrap">
+        <input class="search-input" id="search" type="text" placeholder="Search instances, types, families, processors..." oninput="doSearch(this.value)">
+      </div>
+      <select class="filter-select" id="sel-provider" onchange="doFilterProvider()">
+        <option value="">All Providers</option>
+        <option value="aws">AWS</option>
+        <option value="azure">Azure</option>
+        <option value="gcp">GCP</option>
+      </select>
+      <select class="filter-select" id="sel-arch" onchange="doFilterArch()">
+        <option value="">All Architectures</option>
+        <option value="X86_64">x86_64</option>
+        <option value="ARM64">ARM64</option>
+      </select>
+    </div>
+
+    <div class="result-bar">
+      <span>Showing <strong id="result-count">0</strong> instances</span>
+      <span>Click row to expand</span>
+    </div>
+
+    <div id="content">
+      <div class="loading"><div class="loading-spinner"></div><p>Loading instances...</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CALCULATOR ═══ -->
+<div class="tab-panel" id="panel-calc">
+  <div class="calc-wrap">
+    <div class="calc-title">Find equivalent instances</div>
+    <div class="calc-desc">Configure your requirements and discover matching instance families across AWS, Azure, and GCP.</div>
+
+    <div class="calc-form">
+      <div class="form-section">
+        <div class="form-section-title">Cloud Provider & Location</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Provider</label>
+            <select class="form-select" id="calc-provider" onchange="onCalcProviderChange()">
+              <option value="">All Providers</option>
+              <option value="aws">AWS</option>
+              <option value="azure">Azure</option>
+              <option value="gcp">GCP</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Region</label>
+            <select class="form-select" id="calc-region">
+              <option value="">Any Region</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tenancy</label>
+            <select class="form-select" id="calc-tenancy">
+              <option value="">Any Tenancy</option>
+              <option value="SHARED">Shared</option>
+              <option value="DEDICATED_INSTANCE">Dedicated Instance</option>
+              <option value="DEDICATED_HOST">Dedicated Host</option>
+              <option value="SOLE_TENANT">Sole Tenant</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Compute Resources</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">vCPUs</label>
+            <select class="form-select" id="calc-vcpu">
+              <option value="">Any vCPU</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Memory (GB)</label>
+            <select class="form-select" id="calc-memory">
+              <option value="">Any Memory</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">GPU Required</label>
+            <select class="form-select" id="calc-gpu">
+              <option value="">Any</option>
+              <option value="true">GPU Required</option>
+              <option value="false">No GPU</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="clearCalcForm()">Clear All</button>
+        <button class="btn btn-primary" id="btn-calc-search" onclick="calculate()" style="margin-left:auto;">Find Families &#8594;</button>
+      </div>
+    </div>
+
+    <div class="calc-results" id="calc-results">
+      <div class="results-empty">
+        <h3>Configure your requirements above</h3>
+        <p>Select provider, region, compute specs, and click Find Families.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-meta"><span>Cloud Catalog v1.0</span><span>Data from Cloud Instance API</span></div>
+    </div>
+  </footer>
+</div>
+
+<!-- ═══ RECOMMENDATION ENGINE ═══ -->
+<div class="tab-panel" id="panel-recommend">
+  <div class="calc-wrap">
+    <div class="calc-title">Cloud Capability Recommendation Engine</div>
+    <div class="calc-desc">Enter your minimum resource needs and workload characteristics to get cost-optimized instance sizing recommendations.</div>
+
+    <div class="calc-form">
+      <div class="form-section">
+        <div class="form-section-title">Requirements & Filter Parameters</div>
+        <div class="form-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+          <div class="form-group">
+            <label class="form-label">Region</label>
+            <select class="form-select" id="rec-region">
+              <option value="">Any Region</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tenancy</label>
+            <select class="form-select" id="rec-tenancy">
+              <option value="">Any Tenancy</option>
+              <option value="SHARED">Shared</option>
+              <option value="DEDICATED_INSTANCE">Dedicated Instance</option>
+              <option value="DEDICATED_HOST">Dedicated Host</option>
+              <option value="SOLE_TENANT">Sole Tenant</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Operating System</label>
+            <select class="form-select" id="rec-os">
+              <option value="">Any OS (Default: Linux)</option>
+              <option value="LINUX">Linux</option>
+              <option value="WINDOWS">Windows</option>
+              <option value="UBUNTU">Ubuntu</option>
+              <option value="RED_HAT">Red Hat</option>
+              <option value="SUSE">SUSE</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pricing Model</label>
+            <select class="form-select" id="rec-pricing-model">
+              <option value="ON_DEMAND">On Demand</option>
+              <option value="SPOT">Spot</option>
+              <option value="RESERVED">Reserved</option>
+              <option value="COMMITMENT">Commitment</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Required vCPUs</label>
+            <select class="form-select" id="rec-vcpu">
+              <option value="">Select vCPU</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Required Memory (GB)</label>
+            <select class="form-select" id="rec-memory">
+              <option value="">Select Memory</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-primary" id="btn-rec-search" onclick="getSmartRecommendations()" style="margin-left:auto;">Get Sizing Recommendations &#8594;</button>
+      </div>
+    </div>
+
+    <div class="calc-results" id="rec-results">
+      <div class="results-empty">
+        <h3>Run Recommendation Engine</h3>
+        <p>Set requirements above and click Get Sizing Recommendations.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-meta"><span>Cloud Catalog v1.0</span><span>Recommendation Engine Active</span></div>
+    </div>
+  </footer>
+</div>
+
+<script src="/docs/dashboard.js"></script>
+
+<!-- Details Modal -->
+<div id="details-modal" class="modal-overlay" onclick="closeModal()">
+  <div class="modal-container" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div id="modal-inst-type" class="modal-title">Instance Details</div>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="modal-item" id="item-provider"><span class="modal-label">Provider</span><span id="modal-provider" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-service"><span class="modal-label">Service</span><span id="modal-service" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-vcpu"><span class="modal-label">vCPUs</span><span id="modal-vcpu" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-memory"><span class="modal-label">Memory</span><span id="modal-memory" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-processor"><span class="modal-label">Processor</span><span id="modal-processor" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-architecture"><span class="modal-label">Architecture</span><span id="modal-architecture" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-storage-type"><span class="modal-label">Storage Type</span><span id="modal-storage-type" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-storage-size"><span class="modal-label">Storage Size</span><span id="modal-storage-size" class="modal-value mono">--</span></div>
+        <div class="modal-item" id="item-storage-iops"><span class="modal-label">Storage IOPS</span><span id="modal-storage-iops" class="modal-value mono">--</span></div>
+        <div class="modal-item" id="item-network"><span class="modal-label">Network</span><span id="modal-network" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-gpu" style="grid-column: span 2;"><span class="modal-label">GPU Info</span><span id="modal-gpu" class="modal-value mono">--</span></div>
+        <div class="modal-item" id="item-monthly-cost"><span class="modal-label">Estimated Monthly Price</span><span id="modal-monthly-cost" class="modal-value mono" style="color:var(--green); font-weight:700;">--</span></div>
+        <div class="modal-item" id="item-burstable"><span class="modal-label">Burstable</span><span id="modal-burstable" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-generation"><span class="modal-label">Current Generation</span><span id="modal-generation" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-score" style="grid-column: span 2;"><span class="modal-label">Match Score / Status</span><span id="modal-score" class="modal-value">--</span></div>
+        <div class="modal-item" id="item-rec-upgrade" style="grid-column: span 2; background: rgba(255, 149, 0, 0.08); border: 1px solid rgba(255, 149, 0, 0.2);"><span class="modal-label" style="color: var(--aws);">💡 Generation Recommended upgrade</span><span id="modal-rec-upgrade" class="modal-value">--</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

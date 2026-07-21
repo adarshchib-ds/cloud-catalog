@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Prisma
+prisma/migrations/
+prisma/*.db
+prisma/*.db-journal
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# TypeScript
+*.tsbuildinfo
+dist/
+build/
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

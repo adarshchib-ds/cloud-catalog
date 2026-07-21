@@ -1,0 +1,38 @@
+# ============================================
+# Cloud Catalog - Docker Compose
+# Development environment with PostgreSQL
+# ============================================
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloud-catalog-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cloud_catalog
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cloud_catalog"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloud-catalog-network
+
+ 
+volumes:
+  postgres_data:
+    driver: local
+  # pgadmin_data:
+  #   driver: local
+
+networks:
+  cloud-catalog-network:
+    driver: bridge

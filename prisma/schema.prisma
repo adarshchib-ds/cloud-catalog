@@ -1,0 +1,264 @@
+// ===
+// Cloud Catalog - Production Schema (Capability Comparison Engine)
+// ===
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// Enums
+// ==========================================
+
+enum Architecture {
+  X86_64
+  ARM64
+  X86
+}
+
+enum Tenancy {
+  SHARED
+  DEDICATED_INSTANCE
+  DEDICATED_HOST
+  SOLE_TENANT // Crucial for GCP's unique isolation architecture
+}
+
+enum StorageType {
+  SSD
+  HDD
+  NVME
+  NETWORK
+}
+
+enum OperatingSystem {
+  LINUX
+  WINDOWS
+  UBUNTU
+  RED_HAT
+  SUSE
+}
+
+enum LicenseType {
+  INCLUDED
+  BYOL
+}
+
+enum ProcessorManufacturer {
+  INTEL
+  AMD
+  AWS_GRAVITON
+  GOOGLE
+  MICROSOFT
+  NVIDIA
+  OTHER
+}
+
+// ==========================================
+// Core Models
+// ==========================================
+
+model Provider {
+  id         String  @id @db.VarChar(20)
+  name       String  @unique @db.VarChar(100)
+  slug       String  @unique @db.VarChar(50)
+  websiteUrl String? @db.VarChar(500)
+  logoUrl    String? @db.VarChar(500)
+
+  services         Service[]
+  regions          Region[]
+  instanceFamilies InstanceFamily[]
+
+  @@map("providers")
+}
+
+model Category {
+  id          String  @id @default(uuid()) @db.VarChar(36)
+  slug        String  @unique @db.VarChar(50)
+  name        String  @db.VarChar(100)
+  description String? @db.VarChar(500)
+  sortOrder   Int     @default(0)
+
+  services Service[]
+
+  @@map("categories")
+}
+
+model Service {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  providerId  String   @db.VarChar(20)
+  categoryId  String   @db.VarChar(36)
+  slug        String   @db.VarChar(100)
+  name        String   @db.VarChar(200)
+  description String?  @db.VarChar(2000)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  provider    Provider     @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  vmInstances VmInstance[]
+
+  @@unique([providerId, categoryId, slug])
+  @@index([providerId])
+  @@index([categoryId])
+  @@map("services")
+}
+
+model Region {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  providerId String   @db.VarChar(20)
+  code       String   @db.VarChar(50)
+  name       String   @db.VarChar(200)
+  continent  String?  @db.VarChar(50)
+  country    String?  @db.VarChar(50)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  provider           Provider             @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  vmCapabilityMatrix VmCapabilityMatrix[]
+
+  @@unique([providerId, code])
+  @@index([providerId])
+  @@map("regions")
+}
+
+// ==========================================
+// Virtual Machine Specification Models
+// ==========================================
+
+model InstanceFamily {
+  id                    String                 @id @default(uuid()) @db.VarChar(36)
+  providerId            String                 @db.VarChar(20)
+  name                  String                 @db.VarChar(100)
+  description           String?                @db.VarChar(500)
+  series                String?                @db.VarChar(10)
+  processorManufacturer ProcessorManufacturer?
+  architecture          Architecture?
+
+  provider    Provider     @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  vmInstances VmInstance[]
+
+  @@unique([providerId, name])
+  @@index([providerId])
+  @@index([series])
+  @@map("instance_families")
+}
+
+model VmInstance {
+  id                    String                 @id @default(uuid()) @db.VarChar(36)
+  serviceId             String                 @db.VarChar(36)
+  instanceFamilyId      String                 @db.VarChar(36)
+  instanceType          String                 @db.VarChar(100)
+  instanceSize          String                 @db.VarChar(50)
+  displayName           String?                @db.VarChar(200)
+  generation            Int?
+  vcpu                  Int
+  memoryGib             Float
+  processor             String?                @db.VarChar(200)
+  cpuFrequencyGhz       Float?
+  burstable             Boolean                @default(false)
+
+  // --- Core Capability Extensions ---
+  isCustomSizeAllowed          Boolean @default(false) // Handle's GCP's unique blueprint framework
+  supportsLiveMigration        Boolean @default(false) // Tracks non-reboot capabilities
+  supportsNestedVirtualization Boolean @default(false) // Tracks nested hypervisor compatibility
+
+  // GPU Specifications
+  hasGpu          Boolean @default(false)
+  gpuCount        Int?
+  gpuModel        String? @db.VarChar(200)
+  gpuMemoryGib    Float?
+  gpuManufacturer String? @db.VarChar(100)
+
+  // Storage Specifications
+  storageType           StorageType?
+  storageSizeGib        Float?
+  storageCount          Int?
+  storageIops           BigInt?
+  storageThroughputMbps Float?
+  ebsOptimized          Boolean?     @default(false)
+  storageSummary        String?      @db.VarChar(100)
+
+  // Network Specifications
+  networkPerformance   String? @db.VarChar(255)
+  networkBandwidthGbps Float?
+  enhancedNetworking   Boolean @default(false)
+
+
+
+  currentGeneration  Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  service            Service              @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  instanceFamily     InstanceFamily       @relation(fields: [instanceFamilyId], references: [id], onDelete: Cascade)
+  vmCapabilityMatrix VmCapabilityMatrix[]
+
+  @@unique([serviceId, instanceType])
+  @@index([serviceId])
+  @@index([instanceFamilyId])
+  @@index([vcpu])
+  @@index([memoryGib])
+  @@index([hasGpu])
+  @@map("vm_instances")
+}
+
+// ==========================================
+// Operational Capability Matrix Mapping Layer
+// ==========================================
+
+model VmCapabilityMatrix {
+  id              String          @id @default(uuid()) @db.VarChar(36)
+  vmInstanceId    String          @db.VarChar(36)
+  regionId        String          @db.VarChar(36)
+  operatingSystem OperatingSystem
+  tenancy         Tenancy
+  licenseType     LicenseType?    @default(INCLUDED)
+
+  // Custom Capability Intersection Constraints
+  isRegionAvailable Boolean  @default(true) // Confirms cross-region capability validation
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  vmInstance VmInstance @relation(fields: [vmInstanceId], references: [id], onDelete: Cascade)
+  region     Region     @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  pricings   VmPricing[]
+
+  @@unique([vmInstanceId, regionId, operatingSystem, tenancy, licenseType])
+  @@index([vmInstanceId])
+  @@index([regionId])
+  @@index([isActive])
+  @@map("vm_capability_matrix")
+}
+
+enum PricingType {
+  ON_DEMAND
+  SPOT
+  RESERVED
+  COMMITMENT
+}
+
+model VmPricing {
+  id                 String             @id @default(uuid()) @db.VarChar(36)
+  capabilityMatrixId String             @db.VarChar(36)
+  pricingType        PricingType
+  hourlyCost         Decimal            @db.Decimal(10, 4)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  capabilityMatrix   VmCapabilityMatrix @relation(fields: [capabilityMatrixId], references: [id], onDelete: Cascade)
+
+  @@unique([capabilityMatrixId, pricingType])
+  @@index([capabilityMatrixId])
+  @@index([pricingType])
+  @@map("vm_pricing")
+}
+

@@ -1,0 +1,2 @@
+export const EQUIVALENCE_TOLERANCE = 0.2;
+export const MAX_EQUIVALENTS_PER_PROVIDER = 2;

@@ -1,0 +1,336 @@
+import { Prisma, VmInstance, Service, Provider, InstanceFamily } from '@prisma/client';
+import { prisma as db } from '@config/database';
+import { SearchInstancesQuery, FamilyRecommendationQuery } from '@validators/instance.validator';
+import { SearchInstanceResult, InstanceSpec, ProviderSummary, FamilyRecommendation } from '@/types';
+import { MAX_EQUIVALENTS_PER_PROVIDER } from '@/constants/instance';
+import {
+  pickInstanceFields,
+  pickServiceFields,
+  pickProviderFields,
+  pickFamilyFields,
+} from '../mappers/instance.mapper';
+import { computeMatchScore } from '../utils/matching.utils';
+
+type VmInstanceWithRelations = VmInstance & {
+  service: Service & { provider: Provider };
+  instanceFamily: InstanceFamily;
+};
+
+interface PaginatedInstances {
+  items: SearchInstanceResult[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+}
+
+function buildWhereClause(filters: SearchInstancesQuery): Prisma.VmInstanceWhereInput {
+  const where: Prisma.VmInstanceWhereInput = {};
+
+  if (filters.provider) {
+    where.service = { providerId: filters.provider, isActive: true };
+  } else {
+    where.service = { isActive: true };
+  }
+
+  if (filters.minVcpu) {
+    where.vcpu = filters.minVcpu;
+  }
+
+  if (filters.minMemory) {
+    where.memoryGib = filters.minMemory;
+  }
+
+  if (filters.hasGpu !== undefined) {
+    where.hasGpu = filters.hasGpu;
+  }
+
+  if (filters.architecture || filters.instanceFamily) {
+    where.instanceFamily = {};
+    if (filters.architecture) {
+      where.instanceFamily.architecture = filters.architecture;
+    }
+    if (filters.instanceFamily) {
+      where.instanceFamily.name = { contains: filters.instanceFamily, mode: 'insensitive' };
+    }
+  }
+
+  if (filters.service) {
+    where.service = {
+      ...(where.service as Prisma.ServiceWhereInput),
+      slug: { contains: filters.service, mode: 'insensitive' },
+    };
+  }
+
+  if (filters.region || filters.tenancy) {
+    const matrixWhere: Prisma.VmCapabilityMatrixWhereInput = {
+      isActive: true,
+      isRegionAvailable: true,
+    };
+
+    if (filters.region) {
+      matrixWhere.region = {
+        code: { contains: filters.region, mode: 'insensitive' },
+        isActive: true,
+      };
+    }
+
+    if (filters.tenancy) {
+      matrixWhere.tenancy = filters.tenancy as Prisma.EnumTenancyFilter['equals'];
+    }
+
+    where.vmCapabilityMatrix = { some: matrixWhere };
+  }
+
+  return where;
+}
+
+async function findEquivalents(
+  sourceInstances: VmInstanceWithRelations[],
+  otherProviderIds: string[],
+): Promise<Map<string, any>> {
+  const equivalentMap = new Map<string, any>();
+
+  for (const source of sourceInstances) {
+    equivalentMap.set(source.id, { aws: [], azure: [], gcp: [] });
+  }
+
+  if (otherProviderIds.length === 0) return equivalentMap;
+
+  const allCandidates = await db.vmInstance.findMany({
+    where: {
+      service: { providerId: { in: otherProviderIds }, isActive: true },
+    },
+    include: {
+      service: { include: { provider: true } },
+      instanceFamily: true,
+    },
+  });
+
+  const candidatesByProvider = new Map<string, typeof allCandidates>();
+  for (const c of allCandidates) {
+    const pid = c.service.providerId;
+    if (!candidatesByProvider.has(pid)) candidatesByProvider.set(pid, []);
+    candidatesByProvider.get(pid)!.push(c);
+  }
+
+  for (const source of sourceInstances) {
+    const vcpuRange = 1;
+    const memRange = 1;
+
+    const equivalents = equivalentMap.get(source.id)!;
+
+    for (const [providerId, candidates] of candidatesByProvider) {
+      const matched = candidates
+        .filter(
+          c =>
+            c.vcpu === source.vcpu &&
+            c.memoryGib === source.memoryGib &&
+            c.hasGpu === source.hasGpu,
+        )
+        .map(c => ({
+          id: c.id,
+          instanceType: c.instanceType,
+          displayName: c.displayName,
+          vcpu: c.vcpu,
+          memoryGib: c.memoryGib,
+          architecture: c.instanceFamily.architecture || 'X86_64',
+          processor: c.processor,
+          provider: pickProviderFields(c.service.provider),
+          service: pickServiceFields(c.service),
+          matchScore: computeMatchScore(
+            { vcpu: source.vcpu, memoryGib: source.memoryGib },
+            { vcpu: c.vcpu, memoryGib: c.memoryGib },
+            vcpuRange,
+            memRange,
+          ),
+          burstable: c.burstable,
+          currentGeneration: c.currentGeneration,
+          storageType: c.storageType,
+          storageSizeGib: c.storageSizeGib,
+          storageIops: c.storageIops !== null ? Number(c.storageIops) : null,
+          networkPerformance: c.networkPerformance,
+          gpuCount: c.gpuCount,
+          gpuModel: c.gpuModel,
+          gpuMemoryGib: c.gpuMemoryGib,
+        }))
+        .sort((a, b) => b.matchScore - a.matchScore)
+        .slice(0, MAX_EQUIVALENTS_PER_PROVIDER);
+
+      equivalents[providerId as keyof any] = matched;
+    }
+  }
+
+  return equivalentMap;
+}
+
+export async function searchInstances(filters: SearchInstancesQuery): Promise<PaginatedInstances> {
+  const { page, pageSize } = filters;
+  const where = buildWhereClause(filters);
+
+  const [dbResults, totalCount] = await Promise.all([
+    db.vmInstance.findMany({
+      where,
+      include: {
+        service: { include: { provider: true } },
+        instanceFamily: true,
+      },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }],
+    }),
+    db.vmInstance.count({ where }),
+  ]);
+
+  const sourceProviderIds = [...new Set(dbResults.map(r => r.service.providerId))];
+  const allProviderIds = ['aws', 'azure', 'gcp'];
+  const otherProviderIds = allProviderIds.filter(id => !sourceProviderIds.includes(id));
+
+  const equivalentMap = await findEquivalents(dbResults, otherProviderIds);
+
+  const items: SearchInstanceResult[] = dbResults.map(row => ({
+    instance: pickInstanceFields(row),
+    provider: pickProviderFields(row.service.provider),
+    service: pickServiceFields(row.service),
+    family: pickFamilyFields(row.instanceFamily),
+    equivalents: equivalentMap.get(row.id) ?? { aws: [], azure: [], gcp: [] },
+  }));
+
+  return { items, totalCount, page, pageSize };
+}
+
+function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmInstanceWhereInput {
+  const where: Prisma.VmInstanceWhereInput = {};
+
+  if (filters.provider) {
+    where.service = { providerId: filters.provider, isActive: true };
+  } else {
+    where.service = { isActive: true };
+  }
+
+  if (filters.vcpu) {
+    where.vcpu = filters.vcpu;
+  }
+
+  if (filters.memory) {
+    where.memoryGib = filters.memory;
+  }
+
+  if (filters.hasGpu !== undefined) {
+    where.hasGpu = filters.hasGpu;
+  }
+
+  if (filters.region || filters.tenancy) {
+    const matrixWhere: Prisma.VmCapabilityMatrixWhereInput = {
+      isActive: true,
+      isRegionAvailable: true,
+    };
+
+    if (filters.region) {
+      matrixWhere.region = {
+        code: { contains: filters.region, mode: 'insensitive' },
+        isActive: true,
+      };
+    }
+
+    if (filters.tenancy) {
+      matrixWhere.tenancy = filters.tenancy as Prisma.EnumTenancyFilter['equals'];
+    }
+
+    where.vmCapabilityMatrix = { some: matrixWhere };
+  }
+
+  return where;
+}
+
+export async function recommendFamilies(
+  filters: FamilyRecommendationQuery,
+): Promise<FamilyRecommendation[]> {
+  const where = buildFamilyWhereClause(filters);
+
+  const dbResults = await db.vmInstance.findMany({
+    where,
+    include: {
+      service: { include: { provider: true } },
+      instanceFamily: true,
+    },
+    orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }],
+  });
+
+  const familyMap = new Map<
+    string,
+    {
+      family: { id: string; name: string; description: string | null };
+      provider: ProviderSummary;
+      instances: InstanceSpec[];
+      vcpuValues: number[];
+      memoryValues: number[];
+      hasGpu: boolean;
+    }
+  >();
+
+  for (const row of dbResults) {
+    const key = `${row.instanceFamily.id}:${row.service.providerId}`;
+
+    if (!familyMap.has(key)) {
+      familyMap.set(key, {
+        family: {
+          id: row.instanceFamily.id,
+          name: row.instanceFamily.name,
+          description: row.instanceFamily.description,
+        },
+        provider: pickProviderFields(row.service.provider),
+        instances: [],
+        vcpuValues: [],
+        memoryValues: [],
+        hasGpu: false,
+      });
+    }
+
+    const group = familyMap.get(key)!;
+    group.instances.push(pickInstanceFields(row));
+    group.vcpuValues.push(row.vcpu);
+    group.memoryValues.push(row.memoryGib);
+    if (row.hasGpu) group.hasGpu = true;
+  }
+
+  const recommendations: FamilyRecommendation[] = [];
+
+  for (const group of familyMap.values()) {
+    recommendations.push({
+      family: group.family,
+      provider: group.provider,
+      instanceCount: group.instances.length,
+      vcpuRange: {
+        min: Math.min(...group.vcpuValues),
+        max: Math.max(...group.vcpuValues),
+      },
+      memoryRange: {
+        min: Math.min(...group.memoryValues),
+        max: Math.max(...group.memoryValues),
+      },
+      hasGpu: group.hasGpu,
+      instances: group.instances,
+    });
+  }
+
+  recommendations.sort((a, b) => b.instanceCount - a.instanceCount);
+
+  return recommendations;
+}
+
+export async function getRegions(providerId?: string) {
+  return db.region.findMany({
+    where: {
+      isActive: true,
+      ...(providerId ? { providerId } : {}),
+      vmCapabilityMatrix: {
+        some: {
+          isActive: true,
+        },
+      },
+    },
+    orderBy: {
+      name: 'asc',
+    },
+  });
+}
