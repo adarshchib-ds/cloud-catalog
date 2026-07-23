@@ -6,6 +6,7 @@ import {
   LicenseType,
   PricingType,
 } from '@prisma/client';
+import { ResourceSku } from '@azure/arm-compute';
 import { AzureRetailPriceItem } from '../dto/azure-raw.dto';
 import {
   NormalizedRegionDTO,
@@ -14,7 +15,11 @@ import {
   NormalizedVmCapabilityMatrixDTO,
   NormalizedVmPricingDTO,
 } from '../dto/azure-normalized.dto';
-import { ParsedSeries, ParsedVmSize } from '../documentation/azure-docs.parser';
+
+// Helper to get capability value safely from a ResourceSku
+function getSkuCapability(sku: ResourceSku, name: string): string | undefined {
+  return sku.capabilities?.find(c => c.name?.toLowerCase() === name.toLowerCase())?.value;
+}
 
 // Maps Azure region name to continent/country
 export function mapAzureRegion(armRegionName: string, location: string): NormalizedRegionDTO {
@@ -26,13 +31,9 @@ export function mapAzureRegion(armRegionName: string, location: string): Normali
   };
 }
 
-// Maps and extracts Azure Instance Family from SKU name
-export function mapAzureInstanceFamily(
-  armSkuName: string,
-  parsedDocs: ParsedSeries | undefined,
-): NormalizedInstanceFamilyDTO {
-  // Strip Standard_ prefix and size suffix
-  // e.g. Standard_D2s_v5 -> familyName: D, seriesName: Dsv5
+// Maps and extracts Azure Instance Family from ResourceSku
+export function mapAzureInstanceFamily(sku: ResourceSku): NormalizedInstanceFamilyDTO {
+  const armSkuName = sku.name || 'Unknown';
   const cleanName = armSkuName.replace('Standard_', '').replace('Basic_', '');
   const parts = cleanName.split('_');
   const familyName = parts[0] ? parts[0].replace(/[0-9]/g, '') : 'Unknown';
@@ -54,11 +55,7 @@ export function mapAzureInstanceFamily(
 
   // Determine architecture
   let architecture: Architecture = Architecture.X86_64;
-  if (
-    cleanName.toLowerCase().includes('p_v') ||
-    cleanName.toLowerCase().includes('ps_v') ||
-    parsedDocs?.architecture === 'ARM64'
-  ) {
+  if (cleanName.toLowerCase().includes('p_v') || cleanName.toLowerCase().includes('ps_v')) {
     architecture = Architecture.ARM64;
   }
 
@@ -71,54 +68,60 @@ export function mapAzureInstanceFamily(
   };
 }
 
-// Maps VM instance attributes from Retail Prices API and documentation
-export function mapAzureVmInstance(
-  armSkuName: string,
-  parsedSize: ParsedVmSize | undefined,
-  parsedDocs: ParsedSeries | undefined,
-): NormalizedVmInstanceDTO {
+// Maps VM instance attributes from ResourceSku
+export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
+  const armSkuName = sku.name || 'Unknown';
   const cleanName = armSkuName.replace('Standard_', '').replace('Basic_', '');
   const parts = cleanName.split('_');
   const size = parts[1] || parts[0] || 'unknown';
 
-  // Fallback default specs if doc parsing was missing for this specific SKU
-  const vcpu = parsedSize?.vcpu || 2;
-  const memoryGib = parsedSize?.memoryGib || 4;
+  // Parse capability values
+  const vcpuStr = getSkuCapability(sku, 'vCPUs');
+  const vcpu = vcpuStr ? parseInt(vcpuStr, 10) : 2;
+
+  const memoryStr = getSkuCapability(sku, 'MemoryGB');
+  const memoryGib = memoryStr ? parseFloat(memoryStr) : 4;
+
   const burstable = armSkuName.toLowerCase().includes('standard_b');
-  let hasGpu = parsedSize
-    ? !!parsedSize.tempStorageGib && armSkuName.toLowerCase().includes('nv')
-    : false;
 
-  if (
-    armSkuName.toLowerCase().includes('gpu') ||
-    armSkuName.toLowerCase().includes('nc') ||
-    armSkuName.toLowerCase().includes('nd')
-  ) {
-    hasGpu = true;
-  }
+  const gpuStr = getSkuCapability(sku, 'GPUs');
+  const gpuCount = gpuStr ? parseInt(gpuStr, 10) : 0;
+  const hasGpu = gpuCount > 0;
 
-  // Extract network bandwidth
-  let networkBandwidthGbps: number | null = null;
-  if (parsedSize?.networkBandwidthMbps) {
-    networkBandwidthGbps = parseFloat((parsedSize.networkBandwidthMbps / 1000).toFixed(2));
-  }
+  const gpuModel = hasGpu ? getSkuCapability(sku, 'GpuNames') || 'NVIDIA' : null;
+  const gpuMemoryStr = getSkuCapability(sku, 'GpuMemoryGB');
+  const gpuMemoryGib = gpuMemoryStr ? parseFloat(gpuMemoryStr) : null;
+
+  // Temporary storage capability mapping
+  const tempStorageMBStr = getSkuCapability(sku, 'MaxResourceVolumeMB');
+  const tempStorageGib = tempStorageMBStr ? parseFloat(tempStorageMBStr) / 1024 : null;
+
+  // Nested virtualization support
+  const nestedVirt = getSkuCapability(sku, 'NestedVirtualizationSupported');
+  const supportsNestedVirtualization = nestedVirt === 'True';
 
   return {
     instanceType: armSkuName,
     instanceSize: size,
     vcpu,
     memoryGib,
-    processor: parsedDocs?.processor || null,
+    processor: null, // Populated via pricing description if available, or left null
     burstable,
     hasGpu,
-    gpuCount: hasGpu ? 1 : null,
-    gpuModel: hasGpu ? 'NVIDIA' : null,
-    gpuMemoryGib: null,
+    gpuCount: hasGpu ? gpuCount : null,
+    gpuModel,
+    gpuMemoryGib,
     gpuManufacturer: hasGpu ? 'NVIDIA' : null,
-    networkPerformance: parsedSize?.networkBandwidthMbps
-      ? `${parsedSize.networkBandwidthMbps} Mbps`
-      : null,
-    networkBandwidthGbps,
+    networkPerformance:
+      getSkuCapability(sku, 'AcceleratedNetworkingEnabled') === 'True' ? 'Accelerated' : 'Standard',
+    networkBandwidthGbps: null,
+    storageSummary:
+      getSkuCapability(sku, 'PremiumIO') === 'True'
+        ? 'Premium SSD Supported'
+        : 'Standard Disk Only',
+    storageSizeGib: tempStorageGib,
+    supportsLiveMigration: true,
+    supportsNestedVirtualization,
   };
 }
 

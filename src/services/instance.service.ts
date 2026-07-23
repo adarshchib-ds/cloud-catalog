@@ -163,6 +163,40 @@ async function findEquivalents(
   return equivalentMap;
 }
 
+function resolveHourlyCost(inst: any, filters?: SearchInstancesQuery): number | null {
+  const matrices = inst.vmCapabilityMatrix || [];
+
+  // Filter only matrices that have ON_DEMAND pricing with positive cost
+  const onDemandMatrices = matrices.filter((m: any) =>
+    m.pricings?.some((p: any) => p.pricingType === 'ON_DEMAND' && Number(p.hourlyCost) > 0),
+  );
+
+  if (onDemandMatrices.length === 0) return null;
+
+  // Try matching filters (region/tenancy)
+  let candidates = [...onDemandMatrices];
+
+  if (filters?.region) {
+    const rCode = filters.region.toLowerCase();
+    const regionMatches = candidates.filter((m: any) =>
+      m.region?.code?.toLowerCase().includes(rCode),
+    );
+    if (regionMatches.length > 0) candidates = regionMatches;
+  }
+
+  if (filters?.tenancy) {
+    const tenancyMatches = candidates.filter((m: any) => m.tenancy === filters.tenancy);
+    if (tenancyMatches.length > 0) candidates = tenancyMatches;
+  }
+
+  // Prefer LINUX operating system as default
+  const linuxMatches = candidates.filter((m: any) => m.operatingSystem === 'LINUX');
+  const chosenMatrix = linuxMatches.length > 0 ? linuxMatches[0] : candidates[0];
+
+  const pricing = chosenMatrix?.pricings?.find((p: any) => p.pricingType === 'ON_DEMAND');
+  return pricing ? Number(pricing.hourlyCost) : null;
+}
+
 export async function searchInstances(filters: SearchInstancesQuery): Promise<PaginatedInstances> {
   const { page, pageSize } = filters;
   const where = buildWhereClause(filters);
@@ -173,10 +207,24 @@ export async function searchInstances(filters: SearchInstancesQuery): Promise<Pa
       include: {
         service: { include: { provider: true } },
         instanceFamily: true,
+        vmCapabilityMatrix: {
+          where: {
+            isActive: true,
+            isRegionAvailable: true,
+          },
+          include: {
+            region: true,
+            pricings: {
+              where: {
+                pricingType: 'ON_DEMAND',
+              },
+            },
+          },
+        },
       },
       skip: (page - 1) * pageSize,
       take: pageSize,
-      orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }],
+      orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }, { id: 'asc' }],
     }),
     db.vmInstance.count({ where }),
   ]);
@@ -187,13 +235,16 @@ export async function searchInstances(filters: SearchInstancesQuery): Promise<Pa
 
   const equivalentMap = await findEquivalents(dbResults, otherProviderIds);
 
-  const items: SearchInstanceResult[] = dbResults.map(row => ({
-    instance: pickInstanceFields(row),
-    provider: pickProviderFields(row.service.provider),
-    service: pickServiceFields(row.service),
-    family: pickFamilyFields(row.instanceFamily),
-    equivalents: equivalentMap.get(row.id) ?? { aws: [], azure: [], gcp: [] },
-  }));
+  const items: SearchInstanceResult[] = dbResults.map(row => {
+    const hourlyCost = resolveHourlyCost(row, filters);
+    return {
+      instance: pickInstanceFields(row, hourlyCost),
+      provider: pickProviderFields(row.service.provider),
+      service: pickServiceFields(row.service),
+      family: pickFamilyFields(row.instanceFamily),
+      equivalents: equivalentMap.get(row.id) ?? { aws: [], azure: [], gcp: [] },
+    };
+  });
 
   return { items, totalCount, page, pageSize };
 }

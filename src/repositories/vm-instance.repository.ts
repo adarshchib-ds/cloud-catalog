@@ -57,7 +57,11 @@ export async function getVmInstanceMap(serviceId: string): Promise<Map<string, s
 
 export async function updateVmInstanceAttributes(
   id: string,
-  attributes: { processor?: string | null; storageSummary?: string | null },
+  attributes: {
+    processor?: string | null;
+    storageSummary?: string | null;
+    currentGeneration?: boolean;
+  },
 ): Promise<VmInstance> {
   return prisma.vmInstance.update({
     where: { id },

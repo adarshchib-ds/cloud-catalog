@@ -3,6 +3,7 @@ import { InstanceSpec, ServiceSummary, ProviderSummary, FamilySummary } from '@/
 
 export function pickInstanceFields(
   row: VmInstance & { instanceFamily: InstanceFamily },
+  hourlyCost?: number | null,
 ): InstanceSpec {
   return {
     id: row.id,
@@ -35,6 +36,7 @@ export function pickInstanceFields(
     networkBandwidthGbps: row.networkBandwidthGbps,
     enhancedNetworking: row.enhancedNetworking,
     currentGeneration: row.currentGeneration,
+    hourlyCost: hourlyCost !== undefined ? hourlyCost : null,
   };
 }
 

@@ -48,6 +48,7 @@ export interface InstanceSpec {
   networkBandwidthGbps: number | null;
   enhancedNetworking: boolean;
   currentGeneration: boolean;
+  hourlyCost?: number | null;
 }
 
 export interface EquivalentInstance {
