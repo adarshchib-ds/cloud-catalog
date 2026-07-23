@@ -181,13 +181,18 @@ export async function syncAws(): Promise<void> {
           isActive: normCapability.isActive,
         });
 
-        // Update VmInstance attributes (processor, storageSummary) if present in pricing record (once per instance)
+        // Update VmInstance attributes (processor, storageSummary, currentGeneration) if present in pricing record (once per instance)
         const physicalProcessor = rawData.product.attributes.physicalProcessor;
         const storage = rawData.product.attributes.storage;
-        if ((physicalProcessor || storage) && !updatedInstanceIds.has(vmInstanceId)) {
+        const currentGenAttr = rawData.product.attributes.currentGeneration;
+        if (
+          (physicalProcessor || storage || currentGenAttr) &&
+          !updatedInstanceIds.has(vmInstanceId)
+        ) {
           await updateVmInstanceAttributes(vmInstanceId, {
             ...(physicalProcessor ? { processor: physicalProcessor } : {}),
             ...(storage ? { storageSummary: storage } : {}),
+            ...(currentGenAttr ? { currentGeneration: currentGenAttr === 'Yes' } : {}),
           });
           updatedInstanceIds.add(vmInstanceId);
         }

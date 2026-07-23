@@ -194,11 +194,17 @@ async function loadAll() {
   try {
     let all = [],
       page = 1;
+    const seen = new Set();
     while (true) {
       const res = await fetch(`${API}?page=${page}&pageSize=100`);
       const d = await res.json();
       if (!d.success || !d.data || d.data.length === 0) break;
-      all = all.concat(d.data);
+      for (const item of d.data) {
+        if (!seen.has(item.instance.id)) {
+          seen.add(item.instance.id);
+          all.push(item);
+        }
+      }
       if (all.length >= d.meta.totalCount) break;
       page++;
     }
@@ -370,7 +376,7 @@ function renderTable() {
   const pageData = filtered.slice(startIdx, endIdx);
 
   let html =
-    '<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th></th><th>Instance Name</th><th>Provider</th><th>vCPUs</th><th>Memory</th><th>Architecture</th><th>Processor</th><th>Family</th><th>Storage</th></tr></thead><tbody>';
+    '<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th></th><th>Instance Name</th><th>Provider</th><th>vCPUs</th><th>Memory</th><th>Architecture</th><th>Processor</th><th>Family</th><th>Storage</th><th>On-Demand Hourly Cost</th></tr></thead><tbody>';
   pageData.forEach((item, idx) => {
     const inst = item.instance;
     const isOpen = expandedRows.has(inst.id);
@@ -384,8 +390,9 @@ function renderTable() {
       <td>${esc(inst.processor || '--')}</td>
       <td>${esc(item.family.name)}</td>
       <td>${esc(inst.storageType || '--')}</td>
+      <td class="td-mono">${inst.hourlyCost ? '$' + Number(inst.hourlyCost).toFixed(4) : '--'}</td>
     </tr>`;
-    html += `<tr class="detail-row ${isOpen ? 'open' : ''}" id="detail-${inst.id}"><td colspan="9"><div class="detail-grid">
+    html += `<tr class="detail-row ${isOpen ? 'open' : ''}" id="detail-${inst.id}"><td colspan="10"><div class="detail-grid">
       <div class="detail-item"><span class="detail-label">CPU Frequency</span><span class="detail-value mono">${inst.cpuFrequencyGhz ? inst.cpuFrequencyGhz + ' GHz' : '--'}</span></div>
       <div class="detail-item"><span class="detail-label">Instance Size</span><span class="detail-value">${esc(inst.instanceSize)}</span></div>
       <div class="detail-item"><span class="detail-label">Enhanced NIC</span><span class="detail-value">${inst.enhancedNetworking ? 'Yes' : 'No'}</span></div>

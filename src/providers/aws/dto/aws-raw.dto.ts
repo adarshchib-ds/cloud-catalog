@@ -59,6 +59,7 @@ export const AwsRawPricingProductSchema = z.object({
       regionCode: z.string().optional(),
       physicalProcessor: z.string().optional(),
       storage: z.string().optional(),
+      currentGeneration: z.string().optional(),
     }),
   }),
   terms: z.object({
