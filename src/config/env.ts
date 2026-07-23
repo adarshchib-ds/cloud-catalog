@@ -5,7 +5,7 @@ const envSchema = z.object({
   PORT: z
     .string()
     .transform(val => parseInt(val, 10))
-    .default('8080'),
+    .default('5000'),
   APP_NAME: z.string().default('cloud-catalog'),
   API_VERSION: z.string().default('v1'),
   DATABASE_URL: z
@@ -19,7 +19,7 @@ const envSchema = z.object({
   CORS_ORIGINS: z
     .string()
     .transform(val => val.split(',').map(s => s.trim()))
-    .default('http://localhost:3000,http://localhost:8080'),
+    .default('http://localhost:3000,http://localhost:5000'),
 });
 
 const parsedEnv = envSchema.parse(process.env);

@@ -1,4 +1,4 @@
-const BACKEND_URL = window.location.port === '8080' ? '' : 'http://localhost:8080';
+const BACKEND_URL = window.location.port === '5000' ? '' : 'http://localhost:5000';
 const API = `${BACKEND_URL}/api/v1/instances/search`;
 let allData = [],
   filtered = [],

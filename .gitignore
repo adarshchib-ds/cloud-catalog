@@ -15,6 +15,11 @@ build/
 .env.*.local
 !.env.example
 
+# GCP service-account credentials (NEVER commit secrets)
+gcp-service-account.json
+*-service-account.json
+*.key.json
+
 # Temporary / Internal Scratch Scripts & Data (DO NOT COMMIT SECRETS)
 scripts/seedAndPrice.ts
 backup-db.js
@@ -54,3 +59,4 @@ coverage/
 .cache/
 temp/
 tmp/
+pnpm-lock.yaml
