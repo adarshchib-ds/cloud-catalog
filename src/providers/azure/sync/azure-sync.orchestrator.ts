@@ -423,7 +423,7 @@ export async function syncAzure(): Promise<void> {
         }
       },
       {
-        timeout: 90000, // 1.5 minutes timeout for pricing tables batching
+        timeout: 600000, // 10 minutes timeout to handle network latency on live DB
       },
     );
 

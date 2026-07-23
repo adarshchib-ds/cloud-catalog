@@ -1,4 +1,4 @@
-const BACKEND_URL = window.location.port === '5000' ? '' : 'http://localhost:5000';
+const BACKEND_URL = '';
 const API = `${BACKEND_URL}/api/v1/instances/search`;
 let allData = [],
   filtered = [],
@@ -317,7 +317,7 @@ function applyDictFilters(preservePage = false) {
   const p = document.getElementById('sel-provider').value;
   const a = document.getElementById('sel-arch').value;
   filtered = allData.filter(i => {
-    if (p && i.provider.slug !== p) return false;
+    if (p && i.provider.id !== p) return false;
     if (a && i.instance.architecture !== a) return false;
     if (q) {
       return [
@@ -383,7 +383,7 @@ function renderTable() {
     html += `<tr class="${isOpen ? 'expanded-row' : ''}" onclick="toggleRow('${inst.id}')">
       <td><button class="expand-btn ${isOpen ? 'open' : ''}" onclick="event.stopPropagation();toggleRow('${inst.id}')">&#9654;</button></td>
       <td style="font-weight:500;color:var(--text);">${esc(inst.displayName || inst.instanceType)}</td>
-      <td><span class="td-badge td-badge-${item.provider.slug}">${item.provider.slug.toUpperCase()}</span></td>
+      <td><span class="td-badge td-badge-${item.provider.id}">${item.provider.id.toUpperCase()}</span></td>
       <td class="td-mono">${inst.vcpu}</td>
       <td class="td-mono">${inst.memoryGib} GB</td>
       <td>${esc(inst.architecture)}</td>
