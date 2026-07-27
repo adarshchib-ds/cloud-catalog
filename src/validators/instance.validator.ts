@@ -1,12 +1,22 @@
 import { z } from 'zod';
 
 const searchInstancesQuerySchema = z.object({
-  provider: z.enum(['aws', 'azure', 'gcp']).optional(),
+  provider: z
+    .preprocess(
+      val => (typeof val === 'string' ? val.toLowerCase().trim() : val),
+      z.enum(['aws', 'azure', 'gcp']),
+    )
+    .optional(),
   region: z.string().min(1).max(50).optional(),
   service: z.string().min(1).max(100).optional(),
   tenancy: z.enum(['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT']).optional(),
   instanceFamily: z.string().min(1).max(100).optional(),
-  architecture: z.enum(['X86_64', 'ARM64', 'X86']).optional(),
+  architecture: z
+    .preprocess(
+      val => (typeof val === 'string' ? val.toUpperCase().trim() : val),
+      z.enum(['X86_64', 'ARM64', 'X86']),
+    )
+    .optional(),
   minVcpu: z.coerce.number().int().min(1).optional(),
   maxVcpu: z.coerce.number().int().min(1).optional(),
   minMemory: z.coerce.number().min(0).optional(),
@@ -18,6 +28,7 @@ const searchInstancesQuerySchema = z.object({
       return val;
     }, z.boolean())
     .optional(),
+  search: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });

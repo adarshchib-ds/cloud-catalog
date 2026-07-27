@@ -1,5 +1,10 @@
 import { Request, Response } from 'express';
-import { searchInstances, recommendFamilies, getRegions } from '@services/instance.service';
+import {
+  searchInstances,
+  recommendFamilies,
+  getRegions,
+  getInstancesMetadata,
+} from '@services/instance.service';
 import {
   SearchInstancesQuery,
   FamilyRecommendationQuery,
@@ -22,6 +27,7 @@ export async function searchInstancesController(req: Request, res: Response): Pr
           page: result.page,
           pageSize: result.pageSize,
           totalCount: result.totalCount,
+          globalStats: result.globalStats,
         }),
       ),
     );
@@ -97,6 +103,22 @@ export async function handleSmartRecommendation(req: Request, res: Response): Pr
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Failed to process recommendation engine logic.',
+      },
+    });
+  }
+}
+
+export async function getMetadataController(_req: Request, res: Response): Promise<void> {
+  try {
+    const result = await getInstancesMetadata();
+    res.status(200).json(successResponse(result));
+  } catch (error) {
+    logger.error('Failed to resolve instances metadata', { error });
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to retrieve cloud catalog metadata metrics.',
       },
     });
   }

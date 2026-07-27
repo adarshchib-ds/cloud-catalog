@@ -31,6 +31,11 @@ export interface PaginationMeta {
   pageSize: number;
   totalCount: number;
   totalPages: number;
+  globalStats?: {
+    totalInstances: number;
+    gpuInstances: number;
+    totalProviders: number;
+  };
 }
 
 export interface ListResponse<T> {

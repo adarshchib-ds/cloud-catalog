@@ -112,9 +112,7 @@ export async function fetchAwsPrices(awsRegionCode: string): Promise<AwsRawPrici
   const filters: Filter[] = [
     { Type: 'TERM_MATCH', Field: 'serviceCode', Value: 'AmazonEC2' },
     { Type: 'TERM_MATCH', Field: 'regionCode', Value: awsRegionCode },
-    { Type: 'TERM_MATCH', Field: 'productFamily', Value: 'Compute Instance' },
     { Type: 'TERM_MATCH', Field: 'preInstalledSw', Value: 'NA' },
-    { Type: 'TERM_MATCH', Field: 'capacitystatus', Value: 'UnusedCapacityReservation' }, // Exclude capacity reservations
   ];
 
   try {
@@ -133,7 +131,10 @@ export async function fetchAwsPrices(awsRegionCode: string): Promise<AwsRawPrici
           try {
             // The API returns a stringified JSON document
             const parsed = JSON.parse(rawItem as string);
-            pricingProducts.push(parsed);
+            const family = parsed.product?.productFamily;
+            if (family === 'Compute Instance' || family === 'Compute Instance (bare metal)') {
+              pricingProducts.push(parsed);
+            }
           } catch (err) {
             console.warn('Failed parsing AWS pricing product:', err);
           }
@@ -172,8 +173,21 @@ export async function fetchAwsSpotPrices(awsRegionCode: string): Promise<Map<str
       });
     }
     return spotPriceMap;
-  } catch (error) {
-    console.error(`Error fetching AWS spot prices for region ${awsRegionCode}:`, error);
+  } catch (error: any) {
+    if (
+      error.Code === 'AuthFailure' ||
+      error.name === 'TimeoutError' ||
+      error.code === 'ETIMEDOUT'
+    ) {
+      console.warn(
+        `[WARN] Skipping spot prices for region ${awsRegionCode}: Region is disabled or timed out.`,
+      );
+    } else {
+      console.error(
+        `Error fetching AWS spot prices for region ${awsRegionCode}:`,
+        error.message || error,
+      );
+    }
     return spotPriceMap; // Return empty map rather than crashing the sync
   }
 }

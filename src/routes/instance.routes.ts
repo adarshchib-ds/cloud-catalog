@@ -5,6 +5,7 @@ import {
   recommendFamiliesController,
   getRegionsController,
   handleSmartRecommendation,
+  getMetadataController,
 } from '@controllers/instance.controller';
 import {
   searchInstancesQuerySchema,
@@ -17,6 +18,8 @@ import { validate } from '@middleware/validate';
 const router: ReturnType<typeof Router> = Router();
 
 router.get('/search', validate(searchInstancesQuerySchema, 'query'), searchInstancesController);
+
+router.get('/metadata', getMetadataController);
 
 router.get('/families', validate(familyRecommendationSchema, 'query'), recommendFamiliesController);
 

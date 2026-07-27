@@ -190,56 +190,41 @@ async function loadRecRegions() {
 }
 
 /* ═══ DICTIONARY ═══ */
+let totalCount = 0;
+let debounceTimer;
+
 async function loadAll() {
   try {
-    let all = [],
-      page = 1;
-    const seen = new Set();
-    while (true) {
-      const res = await fetch(`${API}?page=${page}&pageSize=100`);
-      const d = await res.json();
-      if (!d.success || !d.data || d.data.length === 0) break;
-      for (const item of d.data) {
-        if (!seen.has(item.instance.id)) {
-          seen.add(item.instance.id);
-          all.push(item);
-        }
-      }
-      if (all.length >= d.meta.totalCount) break;
-      page++;
+    const metaRes = await fetch(`${BACKEND_URL}/api/v1/instances/metadata`);
+    const metaData = await metaRes.json();
+    if (metaData.success && metaData.data) {
+      allData = []; // Not populated as we do server-side filtering
+      populateVcpuMemFamilies(metaData.data);
     }
-    allData = all;
-    filtered = [...all];
-    populateDictSelects();
-    populateComputeSelects();
-    updateDictStats();
 
     await restoreState();
-    applyDictFilters(true);
+    await fetchInstances();
   } catch (e) {
     document.getElementById('content').innerHTML =
       `<div class="empty"><h3>Failed to load</h3><p>${esc(e.message)}</p></div>`;
   }
 }
 
-function populateDictSelects() {
-  const families = [...new Set(allData.map(i => i.family.name))].sort();
-  const sel = document.getElementById('calc-family');
-  // Clear old options except the first "All Families" or equivalent
-  if (sel) {
-    sel.innerHTML = '<option value="">All Families</option>';
+function populateVcpuMemFamilies(data) {
+  const families = data.families || [];
+  const vcpus = data.vcpus || [];
+  const memories = data.memories || [];
+
+  const selFamily = document.getElementById('calc-family');
+  if (selFamily) {
+    selFamily.innerHTML = '<option value="">All Families</option>';
     families.forEach(f => {
       const o = document.createElement('option');
       o.value = f;
       o.textContent = f;
-      sel.appendChild(o);
+      selFamily.appendChild(o);
     });
   }
-}
-
-function populateComputeSelects() {
-  const vcpus = [...new Set(allData.map(i => i.instance.vcpu))].sort((a, b) => a - b);
-  const memories = [...new Set(allData.map(i => i.instance.memoryGib))].sort((a, b) => a - b);
 
   const calcVcpu = document.getElementById('calc-vcpu');
   const calcMemory = document.getElementById('calc-memory');
@@ -264,99 +249,78 @@ function populateComputeSelects() {
   populate(calcMemory, memories, 16);
   populate(recVcpu, vcpus, 4, true);
   populate(recMemory, memories, 16, true);
-
-  if (calcVcpu && calcMemory) {
-    calcVcpu.addEventListener('change', () => {
-      const selected = parseInt(calcVcpu.value);
-      if (isNaN(selected)) {
-        populate(calcMemory, memories, null);
-      } else {
-        const filteredMemories = [
-          ...new Set(
-            allData.filter(i => i.instance.vcpu === selected).map(i => i.instance.memoryGib),
-          ),
-        ].sort((a, b) => a - b);
-        populate(calcMemory, filteredMemories, null);
-      }
-    });
-  }
-
-  if (recVcpu && recMemory) {
-    recVcpu.addEventListener('change', () => {
-      const selected = parseInt(recVcpu.value);
-      if (isNaN(selected)) {
-        populate(recMemory, memories, null, true);
-      } else {
-        const filteredMemories = [
-          ...new Set(
-            allData.filter(i => i.instance.vcpu === selected).map(i => i.instance.memoryGib),
-          ),
-        ].sort((a, b) => a - b);
-        populate(recMemory, filteredMemories, null, true);
-      }
-    });
-  }
-}
-
-function updateDictStats() {
-  const t = allData.length,
-    g = allData.filter(i => i.instance.hasGpu).length;
-  document.getElementById('stat-total').textContent = t;
-  document.getElementById('stat-gpu').textContent = g;
-  document.getElementById('stat-showing').textContent = filtered.length;
-  document.getElementById('sn-total').textContent = t;
-  document.getElementById('sn-gpu').textContent = g;
-  document.getElementById('sn-showing').textContent = filtered.length;
 }
 
 let dictCurrentPage = 1;
 const dictPageSize = 15;
 
-function applyDictFilters(preservePage = false) {
-  const q = document.getElementById('search').value.toLowerCase();
+async function fetchInstances() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading"><div class="loading-spinner"></div><p>Loading instances...</p></div>';
+
+  const q = document.getElementById('search').value;
   const p = document.getElementById('sel-provider').value;
   const a = document.getElementById('sel-arch').value;
-  filtered = allData.filter(i => {
-    if (p && i.provider.id !== p) return false;
-    if (a && i.instance.architecture !== a) return false;
-    if (q) {
-      return [
-        i.instance.instanceType,
-        i.instance.displayName,
-        i.instance.processor,
-        i.family.name,
-        i.service.name,
-        i.provider.name,
-      ].some(f => f && f.toLowerCase().includes(q));
-    }
-    return true;
+
+  const params = new URLSearchParams({
+    page: dictCurrentPage,
+    pageSize: dictPageSize,
   });
-  if (!preservePage) {
-    dictCurrentPage = 1;
+
+  if (q) params.set('search', q);
+  if (p) params.set('provider', p);
+  if (a) params.set('architecture', a);
+
+  try {
+    const res = await fetch(`${API}?${params.toString()}`);
+    const d = await res.json();
+    if (d.success && d.data) {
+      filtered = d.data;
+      totalCount = d.meta.totalCount;
+
+      if (d.meta.globalStats) {
+        const stats = d.meta.globalStats;
+        document.getElementById('stat-total').textContent = stats.totalInstances;
+        document.getElementById('stat-gpu').textContent = stats.gpuInstances;
+        document.getElementById('stat-showing').textContent = d.meta.totalCount;
+        document.getElementById('sn-total').textContent = stats.totalInstances;
+        document.getElementById('sn-gpu').textContent = stats.gpuInstances;
+        document.getElementById('sn-showing').textContent = d.meta.totalCount;
+      }
+
+      renderTable();
+    } else {
+      content.innerHTML = `<div class="empty"><h3>Error</h3><p>${esc(d.error?.message || 'Failed to search')}</p></div>`;
+    }
+  } catch (e) {
+    content.innerHTML = `<div class="empty"><h3>Error</h3><p>${esc(e.message)}</p></div>`;
   }
-  document.getElementById('result-count').textContent = filtered.length;
-  document.getElementById('stat-showing').textContent = filtered.length;
-  document.getElementById('sn-showing').textContent = filtered.length;
-  renderTable();
-  saveState();
 }
 
 function doSearch(v) {
-  applyDictFilters();
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    dictCurrentPage = 1;
+    fetchInstances();
+  }, 300);
 }
+
 function doFilterProvider() {
-  applyDictFilters();
+  dictCurrentPage = 1;
+  fetchInstances();
 }
+
 function doFilterArch() {
-  applyDictFilters();
+  dictCurrentPage = 1;
+  fetchInstances();
 }
 
 function changeDictPage(dir) {
-  const maxPage = Math.ceil(filtered.length / dictPageSize);
+  const maxPage = Math.ceil(totalCount / dictPageSize);
   dictCurrentPage += dir;
   if (dictCurrentPage < 1) dictCurrentPage = 1;
   if (dictCurrentPage > maxPage) dictCurrentPage = maxPage;
-  renderTable();
+  fetchInstances();
   saveState();
 }
 
@@ -368,12 +332,12 @@ function renderTable() {
     return;
   }
 
-  const total = filtered.length;
+  const total = totalCount;
   const maxPage = Math.ceil(total / dictPageSize);
   if (dictCurrentPage > maxPage) dictCurrentPage = maxPage;
   const startIdx = (dictCurrentPage - 1) * dictPageSize;
-  const endIdx = Math.min(startIdx + dictPageSize, total);
-  const pageData = filtered.slice(startIdx, endIdx);
+  const endIdx = Math.min(startIdx + filtered.length, total);
+  const pageData = filtered;
 
   let html =
     '<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th></th><th>Instance Name</th><th>Provider</th><th>vCPUs</th><th>Memory</th><th>Architecture</th><th>Processor</th><th>Family</th><th>Storage</th><th>On-Demand Hourly Cost</th></tr></thead><tbody>';
@@ -406,7 +370,6 @@ function renderTable() {
   });
   html += '</tbody></table></div>';
 
-  // Render pagination container at the bottom
   html += `
     <div class="pagination-container">
       <div class="pagination-info">

@@ -51,7 +51,14 @@ export function createApp(): Application {
     origin: env.NODE_ENV === 'development' ? true : env.CORS_ORIGINS,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Request-Id',
+      'X-Tunnel-Skip-AntiPhishing-Threshold',
+      'X-Devtunnel-Skip',
+      'Ngrok-Skip-Browser-Warning',
+    ],
   };
   app.use(cors(corsOptions));
 
@@ -66,8 +73,9 @@ export function createApp(): Application {
 
   const apiPrefix = `/api/${env.API_VERSION}`;
 
-  app.use(`${apiPrefix}/health`, healthRoutes);
+  app.use('/instances', instanceRoutes);
   app.use(`${apiPrefix}/instances`, instanceRoutes);
+  app.use(`${apiPrefix}/health`, healthRoutes);
 
   app.get('/', (_req, res) => {
     res.json({

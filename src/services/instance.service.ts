@@ -21,6 +21,11 @@ interface PaginatedInstances {
   totalCount: number;
   page: number;
   pageSize: number;
+  globalStats?: {
+    totalInstances: number;
+    gpuInstances: number;
+    totalProviders: number;
+  };
 }
 
 function buildWhereClause(filters: SearchInstancesQuery): Prisma.VmInstanceWhereInput {
@@ -79,6 +84,18 @@ function buildWhereClause(filters: SearchInstancesQuery): Prisma.VmInstanceWhere
     }
 
     where.vmCapabilityMatrix = { some: matrixWhere };
+  }
+
+  if (filters.search) {
+    const searchVal = filters.search.trim();
+    if (searchVal) {
+      where.OR = [
+        { instanceType: { contains: searchVal, mode: 'insensitive' } },
+        { displayName: { contains: searchVal, mode: 'insensitive' } },
+        { processor: { contains: searchVal, mode: 'insensitive' } },
+        { instanceFamily: { name: { contains: searchVal, mode: 'insensitive' } } },
+      ];
+    }
   }
 
   return where;
@@ -201,33 +218,37 @@ export async function searchInstances(filters: SearchInstancesQuery): Promise<Pa
   const { page, pageSize } = filters;
   const where = buildWhereClause(filters);
 
-  const [dbResults, totalCount] = await Promise.all([
-    db.vmInstance.findMany({
-      where,
-      include: {
-        service: { include: { provider: true } },
-        instanceFamily: true,
-        vmCapabilityMatrix: {
-          where: {
-            isActive: true,
-            isRegionAvailable: true,
-          },
-          include: {
-            region: true,
-            pricings: {
-              where: {
-                pricingType: 'ON_DEMAND',
+  const [dbResults, totalCount, globalTotalCount, globalGpuCount, globalProviderCount] =
+    await Promise.all([
+      db.vmInstance.findMany({
+        where,
+        include: {
+          service: { include: { provider: true } },
+          instanceFamily: true,
+          vmCapabilityMatrix: {
+            where: {
+              isActive: true,
+              isRegionAvailable: true,
+            },
+            include: {
+              region: true,
+              pricings: {
+                where: {
+                  pricingType: 'ON_DEMAND',
+                },
               },
             },
           },
         },
-      },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }, { id: 'asc' }],
-    }),
-    db.vmInstance.count({ where }),
-  ]);
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: [{ vcpu: 'desc' }, { memoryGib: 'desc' }, { id: 'asc' }],
+      }),
+      db.vmInstance.count({ where }),
+      db.vmInstance.count(),
+      db.vmInstance.count({ where: { hasGpu: true } }),
+      db.provider.count(),
+    ]);
 
   const sourceProviderIds = [...new Set(dbResults.map(r => r.service.providerId))];
   const allProviderIds = ['aws', 'azure', 'gcp'];
@@ -246,7 +267,17 @@ export async function searchInstances(filters: SearchInstancesQuery): Promise<Pa
     };
   });
 
-  return { items, totalCount, page, pageSize };
+  return {
+    items,
+    totalCount,
+    page,
+    pageSize,
+    globalStats: {
+      totalInstances: globalTotalCount,
+      gpuInstances: globalGpuCount,
+      totalProviders: globalProviderCount,
+    },
+  };
 }
 
 function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmInstanceWhereInput {
@@ -384,4 +415,17 @@ export async function getRegions(providerId?: string) {
       name: 'asc',
     },
   });
+}
+
+export async function getInstancesMetadata() {
+  const [vcpus, memories, families] = await Promise.all([
+    db.vmInstance.findMany({ select: { vcpu: true }, distinct: ['vcpu'] }),
+    db.vmInstance.findMany({ select: { memoryGib: true }, distinct: ['memoryGib'] }),
+    db.instanceFamily.findMany({ select: { name: true }, distinct: ['name'] }),
+  ]);
+  return {
+    vcpus: vcpus.map(v => v.vcpu).sort((a, b) => a - b),
+    memories: memories.map(m => m.memoryGib).sort((a, b) => a - b),
+    families: families.map(f => f.name).sort(),
+  };
 }

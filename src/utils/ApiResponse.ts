@@ -39,8 +39,13 @@ export function buildPaginationMeta(params: {
   page: number;
   pageSize: number;
   totalCount: number;
+  globalStats?: {
+    totalInstances: number;
+    gpuInstances: number;
+    totalProviders: number;
+  };
 }): PaginationMeta {
-  const { page, pageSize, totalCount } = params;
+  const { page, pageSize, totalCount, globalStats } = params;
   const totalPages = Math.ceil(totalCount / pageSize);
 
   return {
@@ -48,5 +53,6 @@ export function buildPaginationMeta(params: {
     pageSize,
     totalCount,
     totalPages,
+    globalStats,
   };
 }
