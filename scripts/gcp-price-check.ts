@@ -17,16 +17,7 @@ import {
 } from '../src/providers/gcp/services/gcp-billing.service';
 import { buildGcpSkuIndex, composeHourlyCost } from '../src/providers/gcp/mapper/gcp.mapper';
 
-const SPOT_CHECK_TYPES = [
-  'n2-standard-4',
-  'e2-medium',
-  'c3-standard-4',
-  'a2-highgpu-1g',
-  'a2-ultragpu-1g',
-  'a3-highgpu-8g',
-  'g2-standard-4',
-  'f1-micro',
-];
+const SPOT_CHECK_TYPES = ['g4-standard-6', 'g4-standard-48', 'a4-highgpu-8g', 'a4x-highgpu-4g'];
 const SPOT_CHECK_REGION = 'us-central1';
 const USAGE_TYPES = ['OnDemand', 'Preemptible', 'Commit1Yr', 'Commit3Yr'] as const;
 

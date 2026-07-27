@@ -225,6 +225,8 @@ const GPU_MODEL_PATTERNS: [RegExp, string][] = [
   [/Tesla\s*P4/i, 'p4'],
   [/\bL4\b/i, 'l4'],
   [/RTX\s*6000/i, 'rtx-6000'],
+  [/\bGB200\b/i, 'gb200'],
+  [/\bGB300\b/i, 'gb300'],
   [/\bB200\b/i, 'b200'],
 ];
 
@@ -241,6 +243,9 @@ const ACCELERATOR_TYPE_TO_GPU_TOKEN: Record<string, string> = {
   'nvidia-h100-mega-80gb': 'h100-mega-80gb',
   'nvidia-h200-141gb': 'h200-141gb',
   'nvidia-l4': 'l4',
+  'nvidia-rtx-pro-6000': 'rtx-6000',
+  'nvidia-gb200': 'gb200',
+  'nvidia-gb300': 'gb300',
   'nvidia-b200': 'b200',
 };
 
@@ -321,6 +326,12 @@ function resolveSkuFamilyToken(machineTypeName: string): string {
   return baseToken;
 }
 
+// A4/A4X have no separate CPU/RAM SKU at all — the entire instance (vCPU + RAM + one GPU
+// "slice") is priced as a single bundled rate under the GPU resourceGroup (e.g. "A4 Nvidia
+// B200 (1 gpu slice) running in..."), unlike every other GPU-equipped family which composes
+// core + ram + gpu separately.
+const GPU_BUNDLED_SLICE_FAMILIES = new Set(['a4', 'a4x']);
+
 /**
  * Composes a per-instance hourly cost from GCP's separately-priced core/ram/gpu SKU rates.
  * Returns null when a required component price can't be resolved for the region/usageType —
@@ -335,6 +346,16 @@ export function composeHourlyCost(
   skuIndex: { familyIndex: Map<string, SkuBucket>; gpuIndex: Map<string, GcpRawSku[]> },
 ): number | null {
   const familyToken = resolveSkuFamilyToken(machineType.name);
+
+  if (GPU_BUNDLED_SLICE_FAMILIES.has(familyToken)) {
+    const firstAccelerator = machineType.accelerators?.[0];
+    if (!firstAccelerator) return null;
+    const gpuToken = ACCELERATOR_TYPE_TO_GPU_TOKEN[firstAccelerator.guestAcceleratorType];
+    const gpuBucket = gpuToken ? skuIndex.gpuIndex.get(`${gpuToken}|${usageType}`) : undefined;
+    const slicePrice = findComponentPrice(gpuBucket, regionCode);
+    return slicePrice == null ? null : firstAccelerator.guestAcceleratorCount * slicePrice;
+  }
+
   const bucket = skuIndex.familyIndex.get(`${familyToken}|${usageType}`);
   if (!bucket) return null;
 
