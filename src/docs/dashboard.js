@@ -353,7 +353,7 @@ function renderTable() {
       <td>${esc(inst.architecture)}</td>
       <td>${esc(inst.processor || '--')}</td>
       <td>${esc(item.family.name)}</td>
-      <td>${esc(inst.storageType || '--')}</td>
+      <td>${esc(inst.storageSummary || inst.storageType || '--')}</td>
       <td class="td-mono">${inst.hourlyCost ? '$' + Number(inst.hourlyCost).toFixed(4) : '--'}</td>
     </tr>`;
     html += `<tr class="detail-row ${isOpen ? 'open' : ''}" id="detail-${inst.id}"><td colspan="10"><div class="detail-grid">
