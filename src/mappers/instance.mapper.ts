@@ -32,6 +32,7 @@ export function pickInstanceFields(
     storageIops: row.storageIops !== null ? Number(row.storageIops) : null,
     storageThroughputMbps: row.storageThroughputMbps,
     ebsOptimized: row.ebsOptimized,
+    storageSummary: row.storageSummary,
     networkPerformance: row.networkPerformance,
     networkBandwidthGbps: row.networkBandwidthGbps,
     enhancedNetworking: row.enhancedNetworking,

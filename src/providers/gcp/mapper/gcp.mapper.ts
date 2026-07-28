@@ -54,6 +54,30 @@ export function mapInstanceFamily(
   };
 }
 
+export function resolveGcpProcessor(machineTypeName: string): string {
+  const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
+  if (familyToken === 'm1' || familyToken === 'm2')
+    return 'Intel Xeon Scalable (Cascade Lake / Skylake)';
+  if (familyToken === 'm3') return 'Intel Xeon Scalable (Ice Lake)';
+  if (familyToken === 'm4') return '5th Gen Intel Xeon Scalable (Emerald Rapids)';
+  if (familyToken === 'n1') return 'Intel Xeon E5 v4 / Scalable (Skylake/Haswell)';
+  if (familyToken === 'n2') return 'Intel Xeon Scalable (Ice Lake/Cascade Lake)';
+  if (familyToken === 'n2d') return 'AMD EPYC 7002/7003 Series (Rome/Milan)';
+  if (familyToken === 'n4') return '5th Gen Intel Xeon Scalable (Emerald Rapids)';
+  if (familyToken === 'c2') return 'Intel Xeon Scalable (Cascade Lake)';
+  if (familyToken === 'c2d') return 'AMD EPYC 7003 Series (Milan)';
+  if (familyToken === 'c3') return '4th Gen Intel Xeon Scalable (Sapphire Rapids)';
+  if (familyToken === 'c3d') return 'AMD EPYC 9004 Series (Genoa)';
+  if (familyToken === 'c4') return '5th Gen Intel Xeon Scalable (Emerald Rapids)';
+  if (familyToken === 't2a') return 'Ampere Altra ARM Processor';
+  if (familyToken === 't2d') return 'AMD EPYC 7003 Series (Milan)';
+  if (familyToken === 'e2') return 'Custom Intel / AMD EPYC Processor';
+  if (familyToken === 'a2') return 'Intel Xeon Platinum 8273CL + NVIDIA A100 GPU';
+  if (familyToken === 'a3') return '4th Gen Intel Xeon Scalable + NVIDIA H100 GPU';
+  if (familyToken === 'g2') return 'Intel Xeon Scalable + NVIDIA L4 GPU';
+  return 'Intel Xeon / AMD EPYC Processor';
+}
+
 export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
   const parts = raw.name.split('-');
   const instanceSize = parts.slice(1).join('-') || 'unknown';
@@ -66,15 +90,16 @@ export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
     instanceSize,
     vcpu: raw.guestCpus,
     memoryGib: parseFloat((raw.memoryMb / 1024).toFixed(3)),
-    processor: null, // Not returned by the Compute Engine API
+    processor: resolveGcpProcessor(raw.name),
     burstable: raw.isSharedCpu === true,
     hasGpu,
     gpuCount: firstAccelerator?.guestAcceleratorCount ?? null,
     gpuModel: firstAccelerator?.guestAcceleratorType ?? null,
-    gpuMemoryGib: null, // Not returned by the Compute Engine API
+    gpuMemoryGib: null,
     gpuManufacturer: hasGpu ? 'NVIDIA' : null,
-    networkPerformance: null, // Not returned by the Compute Engine API (derived from a public formula, not metadata)
+    networkPerformance: null,
     networkBandwidthGbps: null,
+    storageSummary: 'Network Storage Only (Persistent Disk)',
   };
 }
 
@@ -110,11 +135,6 @@ interface SkuBucket {
   flatRate: GcpRawSku[];
 }
 
-// Real Cloud Billing Catalog family tokens as they appear in SKU descriptions, validated against
-// a live catalog dump (scripts/gcp-sku-dump.ts). Legacy "C2" (compute-optimized, non-D) has no
-// dedicated token at all in the catalog — see the "compute optimized" phrase fallback below.
-// "m4ultramem224" must be checked before "m4": it's a genuinely separate, higher-rate SKU for
-// the 224-vCPU ultra-high-memory M4 shape, not covered by the plain M4 rate.
 const KNOWN_GCP_FAMILY_TOKENS = [
   'm4ultramem224',
   'a3ultra',
@@ -139,6 +159,8 @@ const KNOWN_GCP_FAMILY_TOKENS = [
   'g4',
   'h3',
   'h4d',
+  'm1',
+  'm2',
   'm3',
   'm4',
   't2a',

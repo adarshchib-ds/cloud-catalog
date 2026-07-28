@@ -63,9 +63,6 @@ export async function fetchSeriesFileList(): Promise<GitHubFile[]> {
   return files.length > 0 ? files : getFallbackSeriesList();
 }
 
-/**
- * Fetches raw markdown content for a given file path.
- */
 export async function fetchRawMarkdown(path: string): Promise<string> {
   const url = `https://raw.githubusercontent.com/MicrosoftDocs/azure-compute-docs/main/${path}`;
   let retries = 3;
@@ -77,7 +74,32 @@ export async function fetchRawMarkdown(path: string): Promise<string> {
       if (!response.ok) {
         throw new Error(`HTTP error fetching raw file! status: ${response.status}`);
       }
-      return await response.text();
+      let content = await response.text();
+
+      // Automatically inline [!INCLUDE [...](./includes/...)] references
+      const includeMatches = Array.from(
+        content.matchAll(/\[!INCLUDE\s+\[[^\]]*\]\(\.\/includes\/([^)]+)\)\]/gi),
+      );
+      if (includeMatches.length > 0) {
+        const parentDir = path.substring(0, path.lastIndexOf('/'));
+        for (const match of includeMatches) {
+          const includeFileName = match[1];
+          const includePath = `${parentDir}/includes/${includeFileName}`;
+          try {
+            const includeResponse = await fetch(
+              `https://raw.githubusercontent.com/MicrosoftDocs/azure-compute-docs/main/${includePath}`,
+            );
+            if (includeResponse.ok) {
+              const includeText = await includeResponse.text();
+              content = content.replace(match[0], `\n${includeText}\n`);
+            }
+          } catch (e) {
+            // Ignore missing include files
+          }
+        }
+      }
+
+      return content;
     } catch (error) {
       retries--;
       if (retries === 0) throw error;

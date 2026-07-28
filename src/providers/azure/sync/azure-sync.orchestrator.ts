@@ -3,6 +3,8 @@ import { prisma } from '../../../config/database';
 import { logger } from '../../../config/logger';
 import { fetchAzureVmPricing } from '../services/azure-pricing.service';
 import { fetchAzureVmSkus } from '../services/azure-client.service';
+import { fetchSeriesFileList, fetchRawMarkdown } from '../services/azure-docs.service';
+import { parseSeriesMarkdown } from '../documentation/azure-docs.parser';
 import {
   mapAzureRegion,
   mapAzureInstanceFamily,
@@ -167,6 +169,56 @@ export async function syncAzure(): Promise<void> {
 
     const familyMap = await getInstanceFamilyMap('azure');
 
+    // 5.5 Fetch & Parse Azure GitHub Documentation for Processor & Specs Enrichment
+    logger.info('Fetching & parsing Azure GitHub Documentation for specs & processor enrichment...');
+    const docSkuMap = new Map<
+      string,
+      {
+        processor: string | null;
+        cpuFrequencyGhz: number | null;
+        storageSummary: string | null;
+        storageSizeGib: number | null;
+        networkBandwidthGbps: number | null;
+        supportsLiveMigration: boolean | null;
+        supportsNestedVirtualization: boolean | null;
+      }
+    >();
+
+    try {
+      const docFiles = await fetchSeriesFileList();
+      for (const file of docFiles) {
+        try {
+          const markdown = await fetchRawMarkdown(file.path);
+          const parsedSeries = parseSeriesMarkdown(markdown, file.path);
+          for (const size of parsedSeries.sizes) {
+            const key = size.name.toLowerCase();
+            const tempStorage = size.tempStorageGib ?? 0;
+            const storageSummary =
+              tempStorage > 0
+                ? `Local Temp ${tempStorage} GB SSD`
+                : 'Network Storage Only (Managed Disks)';
+            const networkBandwidthGbps = size.networkBandwidthMbps
+              ? size.networkBandwidthMbps / 1000
+              : null;
+            docSkuMap.set(key, {
+              processor: parsedSeries.processor,
+              cpuFrequencyGhz: parsedSeries.cpuFrequencyGhz,
+              storageSummary,
+              storageSizeGib: tempStorage,
+              networkBandwidthGbps,
+              supportsLiveMigration: parsedSeries.features.liveMigrationSupported,
+              supportsNestedVirtualization: parsedSeries.features.nestedVirtualizationSupported,
+            });
+          }
+        } catch (err) {
+          logger.warn(`Failed fetching doc file ${file.path}: ${err}`);
+        }
+      }
+      logger.info(`Enriched documentation lookup table for ${docSkuMap.size} Azure SKUs.`);
+    } catch (err) {
+      logger.warn(`Failed querying GitHub Docs API: ${err}`);
+    }
+
     // 6. Sync VM Instances
     logger.info('Syncing Azure VM Instances...');
     const skuNames = rawSkus.map(s => s.name!).filter(Boolean);
@@ -196,6 +248,7 @@ export async function syncAzure(): Promise<void> {
         continue;
       }
 
+      const docSpec = docSkuMap.get(sku.name.toLowerCase()) || docSkuMap.get(clean.toLowerCase());
       const normalizedVm = mapAzureVmInstance(sku);
       const isCurrent = generationMap.get(sku.name) ?? true;
 
@@ -204,30 +257,50 @@ export async function syncAzure(): Promise<void> {
         serviceId,
         instanceFamilyId: familyId,
         currentGeneration: isCurrent,
-        storageSummary: normalizedVm.storageSummary || null,
+        processor: docSpec?.processor || normalizedVm.processor || null,
+        cpuFrequencyGhz: docSpec?.cpuFrequencyGhz || normalizedVm.cpuFrequencyGhz || null,
+        storageSummary:
+          docSpec?.storageSummary ||
+          (normalizedVm.storageSizeGib
+            ? `Local Temp ${normalizedVm.storageSizeGib} GB SSD`
+            : 'Network Storage Only (Managed Disks)'),
         storageType: normalizedVm.storageType || null,
-        storageSizeGib: normalizedVm.storageSizeGib || null,
+        storageSizeGib: docSpec?.storageSizeGib ?? normalizedVm.storageSizeGib ?? null,
         storageCount: normalizedVm.storageCount || null,
         storageIops: normalizedVm.storageIops || null,
         storageThroughputMbps: normalizedVm.storageThroughputMbps || null,
-        supportsLiveMigration: normalizedVm.supportsLiveMigration ?? false,
-        supportsNestedVirtualization: normalizedVm.supportsNestedVirtualization ?? false,
+        networkBandwidthGbps:
+          docSpec?.networkBandwidthGbps || normalizedVm.networkBandwidthGbps || null,
+        supportsLiveMigration:
+          docSpec?.supportsLiveMigration ?? normalizedVm.supportsLiveMigration ?? false,
+        supportsNestedVirtualization:
+          docSpec?.supportsNestedVirtualization ??
+          normalizedVm.supportsNestedVirtualization ??
+          false,
       };
 
       const existingVm = existingVmMap.get(sku.name);
       if (!existingVm) {
         vmsToCreate.push(vmData);
       } else {
-        // Only update if critical attributes or generation changed to reduce unnecessary DB writes
+        // Update if critical attributes, processor, frequency, or storage changed
         if (
           existingVm.currentGeneration !== isCurrent ||
-          existingVm.instanceFamilyId !== familyId
+          existingVm.instanceFamilyId !== familyId ||
+          (docSpec?.processor && existingVm.processor !== docSpec.processor) ||
+          (docSpec?.cpuFrequencyGhz && existingVm.cpuFrequencyGhz !== docSpec.cpuFrequencyGhz) ||
+          (docSpec?.storageSummary && existingVm.storageSummary !== docSpec.storageSummary)
         ) {
           vmsToUpdate.push({
             id: existingVm.id,
             data: {
               currentGeneration: isCurrent,
               instanceFamilyId: familyId,
+              processor: docSpec?.processor || existingVm.processor,
+              cpuFrequencyGhz: docSpec?.cpuFrequencyGhz || existingVm.cpuFrequencyGhz,
+              storageSummary: docSpec?.storageSummary || existingVm.storageSummary,
+              storageSizeGib: docSpec?.storageSizeGib ?? existingVm.storageSizeGib,
+              networkBandwidthGbps: docSpec?.networkBandwidthGbps || existingVm.networkBandwidthGbps,
             },
           });
         }
@@ -291,7 +364,6 @@ export async function syncAzure(): Promise<void> {
 
     const capabilitiesToCreate: any[] = [];
     const pricingMap = new Map<string, any>(); // key = capabilityId_pricingType -> pricing record
-    const instancesToUpdate = new Map<string, { processor: string; storageSummary: string }>();
 
     for (const item of rawPricing) {
       const vmInstanceId = instanceMap.get(item.armSkuName);
@@ -323,22 +395,6 @@ export async function syncAzure(): Promise<void> {
           isRegionAvailable: normCap.isRegionAvailable,
           isActive: normCap.isActive,
         });
-      }
-
-      // Collect attributes to update on the VM instance if they changed
-      const existingVm = existingVmMap.get(item.armSkuName);
-      if (existingVm) {
-        const newProcessor = item.productName.replace('Virtual Machines ', '');
-        const newStorageSummary = item.meterName;
-        if (
-          existingVm.processor !== newProcessor ||
-          existingVm.storageSummary !== newStorageSummary
-        ) {
-          instancesToUpdate.set(vmInstanceId, {
-            processor: newProcessor,
-            storageSummary: newStorageSummary,
-          });
-        }
       }
 
       // Collect pricing records
@@ -426,25 +482,6 @@ export async function syncAzure(): Promise<void> {
         timeout: 600000, // 10 minutes timeout to handle network latency on live DB
       },
     );
-
-    // d. Batch update VM Instance attributes (processor, storageSummary) outside the transaction
-    if (instancesToUpdate.size > 0) {
-      logger.info(`Updating attributes for ${instancesToUpdate.size} VM instances...`);
-      const updatePromises = Array.from(instancesToUpdate.entries()).map(([id, attrs]) =>
-        prisma.vmInstance.update({
-          where: { id },
-          data: {
-            processor: attrs.processor,
-            storageSummary: attrs.storageSummary,
-          },
-        }),
-      );
-
-      const chunkSize = 100;
-      for (let i = 0; i < updatePromises.length; i += chunkSize) {
-        await Promise.all(updatePromises.slice(i, i + chunkSize));
-      }
-    }
 
     logger.info('Azure Ingestion Synchronization Pipeline execution completed successfully.');
   } catch (error) {

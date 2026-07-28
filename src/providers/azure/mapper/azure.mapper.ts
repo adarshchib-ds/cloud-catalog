@@ -105,7 +105,8 @@ export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
     instanceSize: size,
     vcpu,
     memoryGib,
-    processor: null, // Populated via pricing description if available, or left null
+    processor: null,
+    cpuFrequencyGhz: null,
     burstable,
     hasGpu,
     gpuCount: hasGpu ? gpuCount : null,

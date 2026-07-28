@@ -80,6 +80,25 @@ export function mapInstanceFamily(raw: AwsRawInstanceType): NormalizedInstanceFa
   };
 }
 
+export function resolveAwsProcessor(instanceType: string): string {
+  const family = instanceType.split('.')[0] || '';
+  if (family.endsWith('g') || instanceType.includes('graviton')) {
+    if (family.startsWith('c7') || family.startsWith('m7') || family.startsWith('r7'))
+      return 'AWS Graviton3 Processor';
+    if (family.startsWith('c8') || family.startsWith('m8') || family.startsWith('r8'))
+      return 'AWS Graviton4 Processor';
+    return 'AWS Graviton2 Processor';
+  }
+  if (instanceType.includes('a') && !family.startsWith('i')) {
+    return 'AMD EPYC 7002/7003 Series';
+  }
+  if (family.startsWith('c6i') || family.startsWith('m6i') || family.startsWith('r6i'))
+    return '3rd Gen Intel Xeon Platinum 8375C (Ice Lake)';
+  if (family.startsWith('c7i') || family.startsWith('m7i') || family.startsWith('r7i'))
+    return '4th Gen Intel Xeon Platinum 8488C (Sapphire Rapids)';
+  return 'Intel Xeon Platinum Processor';
+}
+
 export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO {
   const parts = raw.InstanceType.split('.');
   const size = parts[1] || 'unknown';
@@ -115,7 +134,7 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
     instanceSize: size,
     vcpu: raw.VCpuInfo.DefaultVCpus,
     memoryGib,
-    processor: null, // Populated via pricing description if needed, or left null
+    processor: resolveAwsProcessor(raw.InstanceType),
     burstable,
     hasGpu,
     gpuCount,
@@ -124,6 +143,7 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
     gpuManufacturer,
     networkPerformance: raw.NetworkInfo?.NetworkPerformance ?? null,
     networkBandwidthGbps: raw.NetworkInfo?.NetworkBandwidthGbps ?? null,
+    storageSummary: 'Network Storage Only (EBS)',
   };
 }
 

@@ -30,6 +30,7 @@ export interface NormalizedVmInstanceDTO {
   vcpu: number;
   memoryGib: number;
   processor: string | null;
+  cpuFrequencyGhz?: number | null;
   burstable: boolean;
   hasGpu: boolean;
   gpuCount: number | null;

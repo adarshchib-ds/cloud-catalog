@@ -44,6 +44,7 @@ export interface InstanceSpec {
   storageIops: number | null;
   storageThroughputMbps: number | null;
   ebsOptimized: boolean | null;
+  storageSummary: string | null;
   networkPerformance: string | null;
   networkBandwidthGbps: number | null;
   enhancedNetworking: boolean;
