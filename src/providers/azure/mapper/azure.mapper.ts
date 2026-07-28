@@ -116,6 +116,7 @@ export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
     networkPerformance:
       getSkuCapability(sku, 'AcceleratedNetworkingEnabled') === 'True' ? 'Accelerated' : 'Standard',
     networkBandwidthGbps: null,
+    enhancedNetworking: getSkuCapability(sku, 'AcceleratedNetworkingEnabled') === 'True',
     storageSummary:
       getSkuCapability(sku, 'PremiumIO') === 'True'
         ? 'Premium SSD Supported'
@@ -164,37 +165,44 @@ export function mapAzurePricing(item: AzureRetailPriceItem): NormalizedVmPricing
   };
 }
 
-// Resolves currentGeneration status for all VM instances
+// Resolves currentGeneration status for all Azure VM instances using Microsoft's official lifecycle lists
 export function determineCurrentGeneration(skuNames: string[]): Map<string, boolean> {
   const generationMap = new Map<string, boolean>();
-  const familyGens = new Map<string, number>();
 
-  // First pass: extract families and their versions
-  const skuMeta = skuNames.map(sku => {
-    const clean = sku.replace('Standard_', '').replace('Basic_', '');
-    // Regex to match version suffix like _v5, _v2, etc.
-    const match = clean.match(/_v(\d+)/i);
-    const gen = match ? parseInt(match[1], 10) : 1;
+  const isLegacySku = (skuName: string): boolean => {
+    const clean = skuName.replace('Standard_', '').replace('Basic_', '').toLowerCase();
 
-    // Group name: strip _v5 and Standard_ to get family baseline
-    const familyKey = clean.split('_')[0]?.replace(/[0-9]/g, '') || 'unknown';
+    // Basic & Standard A-series (A0-A7, Av2, Amv2)
+    if (/^a[0-9]/i.test(clean) || (clean.includes('v2') && clean.startsWith('a'))) return true;
 
-    return { sku, familyKey, gen };
-  });
-
-  // Find max generation per family group
-  skuMeta.forEach(({ familyKey, gen }) => {
-    const max = familyGens.get(familyKey) || 0;
-    if (gen > max) {
-      familyGens.set(familyKey, gen);
+    // Series with version suffixes _v1, _v2, _v3, _v4 listed in Microsoft previous-gen / retired lists
+    if (clean.includes('_v1') || clean.includes('_v2') || clean.includes('_v3') || clean.includes('_v4')) {
+      if (
+        clean.startsWith('d') || clean.startsWith('ds') || clean.startsWith('e') ||
+        clean.startsWith('es') || clean.startsWith('f') || clean.startsWith('fs') ||
+        clean.startsWith('l') || clean.startsWith('ls') || clean.startsWith('m192') ||
+        clean.startsWith('nv') || clean.startsWith('nc')
+      ) return true;
     }
-  });
 
-  // Second pass: mark current generation
-  skuMeta.forEach(({ sku, familyKey, gen }) => {
-    const maxGen = familyGens.get(familyKey) || 1;
-    generationMap.set(sku, gen === maxGen);
-  });
+    // Unversioned legacy series (D1-D14, DS1-DS14, F1-F16, G1-G5, GS1-GS5, Ls)
+    if (
+      /^d[0-9]/i.test(clean) || /^ds[0-9]/i.test(clean) || /^f[0-9]/i.test(clean) ||
+      /^fs[0-9]/i.test(clean) || /^g[0-9]/i.test(clean) || /^gs[0-9]/i.test(clean) ||
+      /^ls[0-9]/i.test(clean)
+    ) {
+      if (!clean.includes('_v5') && !clean.includes('_v6') && !clean.includes('_v4')) return true;
+    }
+
+    // B-series (V1) is previous-gen per Microsoft previous-gen-sizes-list.md
+    if (clean.startsWith('b') && !clean.includes('_v2')) return true;
+
+    return false;
+  };
+
+  for (const sku of skuNames) {
+    generationMap.set(sku, !isLegacySku(sku));
+  }
 
   return generationMap;
 }

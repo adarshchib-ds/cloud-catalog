@@ -88,6 +88,19 @@ export async function fetchAwsInstanceTypes(): Promise<AwsRawInstanceType[]> {
                     NetworkBandwidthGbps: inst.NetworkInfo.NetworkPerformance?.includes('Gbps')
                       ? parseFloat(inst.NetworkInfo.NetworkPerformance.split(' ')[0])
                       : undefined,
+                    EnaSupport: inst.NetworkInfo.EnaSupport ?? undefined,
+                    EfaSupported: inst.NetworkInfo.EfaSupported ?? undefined,
+                  }
+                : undefined,
+              InstanceStorageInfo: inst.InstanceStorageInfo
+                ? {
+                    TotalSizeInGB: inst.InstanceStorageInfo.TotalSizeInGB ?? undefined,
+                    Disks:
+                      inst.InstanceStorageInfo.Disks?.map((d: any) => ({
+                        Count: d.Count ?? undefined,
+                        SizeInGB: d.SizeInGB ?? undefined,
+                        Type: d.Type ?? undefined,
+                      })) ?? undefined,
                   }
                 : undefined,
             });

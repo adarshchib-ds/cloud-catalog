@@ -45,6 +45,9 @@ export interface NormalizedVmInstanceDTO {
   storageCount?: number | null;
   storageIops?: any;
   storageThroughputMbps?: number | null;
+  generation?: number | null;
+  currentGeneration?: boolean;
+  enhancedNetworking?: boolean;
   supportsLiveMigration?: boolean;
   supportsNestedVirtualization?: boolean;
 }

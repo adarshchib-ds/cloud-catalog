@@ -56,6 +56,7 @@ export function mapInstanceFamily(
 
 export function resolveGcpProcessor(machineTypeName: string): string {
   const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
+  if (familyToken === 'x4') return '4th Gen Intel Xeon Scalable (Sapphire Rapids)';
   if (familyToken === 'm1' || familyToken === 'm2')
     return 'Intel Xeon Scalable (Cascade Lake / Skylake)';
   if (familyToken === 'm3') return 'Intel Xeon Scalable (Ice Lake)';
@@ -69,6 +70,9 @@ export function resolveGcpProcessor(machineTypeName: string): string {
   if (familyToken === 'c3') return '4th Gen Intel Xeon Scalable (Sapphire Rapids)';
   if (familyToken === 'c3d') return 'AMD EPYC 9004 Series (Genoa)';
   if (familyToken === 'c4') return '5th Gen Intel Xeon Scalable (Emerald Rapids)';
+  if (familyToken === 'c4a') return 'Google Axion ARM Processor (Neoverse V2)';
+  if (familyToken === 'z3') return '4th Gen Intel Xeon Scalable (Sapphire Rapids)';
+  if (familyToken === 'h3') return '4th Gen Intel Xeon Scalable (Sapphire Rapids)';
   if (familyToken === 't2a') return 'Ampere Altra ARM Processor';
   if (familyToken === 't2d') return 'AMD EPYC 7003 Series (Milan)';
   if (familyToken === 'e2') return 'Custom Intel / AMD EPYC Processor';
@@ -78,12 +82,42 @@ export function resolveGcpProcessor(machineTypeName: string): string {
   return 'Intel Xeon / AMD EPYC Processor';
 }
 
+export function resolveGcpCpuFrequency(machineTypeName: string): number | null {
+  const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
+  if (['x4', 'c4', 'n4', 'm4'].includes(familyToken)) return 3.4;
+  if (['c4a'].includes(familyToken)) return 3.2;
+  if (['c3', 'm3', 'z3', 'h3'].includes(familyToken)) return 3.5;
+  if (['c3d'].includes(familyToken)) return 3.7;
+  if (['c2', 'n2'].includes(familyToken)) return 3.4;
+  if (['c2d', 'n2d', 't2d'].includes(familyToken)) return 2.8;
+  if (['t2a'].includes(familyToken)) return 3.0;
+  if (['a3', 'a2', 'g2'].includes(familyToken)) return 3.1;
+  if (['n1', 'm1'].includes(familyToken)) return 2.2;
+  if (['e2'].includes(familyToken)) return 2.2;
+  return null;
+}
+
+export function resolveGcpEnhancedNetworking(_machineTypeName: string): boolean {
+  // Enhanced NIC is specific to AWS (ENA) / Azure (Accelerated Networking). GCP operates on native infrastructure.
+  return false;
+}
+
+export function resolveGcpCurrentGeneration(machineTypeName: string): boolean {
+  const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
+  const legacyFamilies = ['n1', 'f1-micro', 'g1-small', 'm1'];
+  if (legacyFamilies.includes(familyToken) || machineTypeName === 'f1-micro' || machineTypeName === 'g1-small') {
+    return false;
+  }
+  return true;
+}
+
 export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
   const parts = raw.name.split('-');
   const instanceSize = parts.slice(1).join('-') || 'unknown';
 
   const hasGpu = !!raw.accelerators?.length;
   const firstAccelerator = raw.accelerators?.[0];
+  const burstable = raw.isSharedCpu === true || raw.name === 'f1-micro' || raw.name === 'g1-small' || raw.name.startsWith('e2-micro') || raw.name.startsWith('e2-small') || raw.name.startsWith('e2-medium');
 
   return {
     instanceType: raw.name,
@@ -91,13 +125,16 @@ export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
     vcpu: raw.guestCpus,
     memoryGib: parseFloat((raw.memoryMb / 1024).toFixed(3)),
     processor: resolveGcpProcessor(raw.name),
-    burstable: raw.isSharedCpu === true,
+    cpuFrequencyGhz: resolveGcpCpuFrequency(raw.name),
+    burstable,
+    enhancedNetworking: resolveGcpEnhancedNetworking(raw.name),
+    currentGeneration: resolveGcpCurrentGeneration(raw.name),
     hasGpu,
     gpuCount: firstAccelerator?.guestAcceleratorCount ?? null,
     gpuModel: firstAccelerator?.guestAcceleratorType ?? null,
     gpuMemoryGib: null,
     gpuManufacturer: hasGpu ? 'NVIDIA' : null,
-    networkPerformance: null,
+    networkPerformance: resolveGcpEnhancedNetworking(raw.name) ? 'gVNIC Tier 1' : 'Standard',
     networkBandwidthGbps: null,
     storageSummary: 'Network Storage Only (Persistent Disk)',
   };
@@ -136,6 +173,7 @@ interface SkuBucket {
 }
 
 const KNOWN_GCP_FAMILY_TOKENS = [
+  'x4',
   'm4ultramem224',
   'a3ultra',
   'a3plus',

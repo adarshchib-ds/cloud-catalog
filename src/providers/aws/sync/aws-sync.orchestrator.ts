@@ -243,27 +243,35 @@ export async function syncAws(): Promise<void> {
 
           // Collect attributes to update on the VM instance if they changed (once per VM ID)
           const physicalProcessor = rawData.product.attributes.physicalProcessor;
+          const clockSpeedAttr = rawData.product.attributes.clockSpeed;
           const storage = rawData.product.attributes.storage;
           const currentGenAttr = rawData.product.attributes.currentGeneration;
           if (
-            (physicalProcessor || storage || currentGenAttr) &&
+            (physicalProcessor || clockSpeedAttr || storage || currentGenAttr) &&
             !updatedInstanceIds.has(vmInstanceId)
           ) {
             const existingVm = existingVmMap.get(instType);
             if (existingVm) {
               const processorVal = physicalProcessor || existingVm.processor;
               const storageVal = storage || existingVm.storageSummary;
+              let freqVal = existingVm.cpuFrequencyGhz;
+              if (clockSpeedAttr) {
+                const parsedFreq = parseFloat(clockSpeedAttr.replace(/[^0-9.]/g, ''));
+                if (!isNaN(parsedFreq) && parsedFreq > 0) freqVal = parsedFreq;
+              }
               const currentGenVal = currentGenAttr
                 ? currentGenAttr === 'Yes'
                 : existingVm.currentGeneration;
 
               if (
                 existingVm.processor !== processorVal ||
+                existingVm.cpuFrequencyGhz !== freqVal ||
                 existingVm.storageSummary !== storageVal ||
                 existingVm.currentGeneration !== currentGenVal
               ) {
                 vmAttributesToUpdate.set(vmInstanceId, {
                   processor: processorVal,
+                  cpuFrequencyGhz: freqVal,
                   storageSummary: storageVal,
                   currentGeneration: currentGenVal,
                 });

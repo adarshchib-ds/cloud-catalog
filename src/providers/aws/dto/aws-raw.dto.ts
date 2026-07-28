@@ -42,6 +42,22 @@ export const AwsRawInstanceTypeSchema = z.object({
     .object({
       NetworkPerformance: z.string().optional(),
       NetworkBandwidthGbps: z.number().optional(),
+      EnaSupport: z.string().optional(),
+      EfaSupported: z.boolean().optional(),
+    })
+    .optional(),
+  InstanceStorageInfo: z
+    .object({
+      TotalSizeInGB: z.number().optional(),
+      Disks: z
+        .array(
+          z.object({
+            Count: z.number().optional(),
+            SizeInGB: z.number().optional(),
+            Type: z.string().optional(),
+          }),
+        )
+        .optional(),
     })
     .optional(),
 });
@@ -58,6 +74,7 @@ export const AwsRawPricingProductSchema = z.object({
       licenseModel: z.string().optional(),
       regionCode: z.string().optional(),
       physicalProcessor: z.string().optional(),
+      clockSpeed: z.string().optional(),
       storage: z.string().optional(),
       currentGeneration: z.string().optional(),
     }),

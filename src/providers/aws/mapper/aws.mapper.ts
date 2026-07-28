@@ -106,11 +106,8 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
   // Memory: Convert MiB to GiB
   const memoryGib = parseFloat((raw.MemoryInfo.SizeInMiB / 1024).toFixed(3));
 
-  // Burstable instance families
-  const burstable =
-    raw.InstanceType.startsWith('t2') ||
-    raw.InstanceType.startsWith('t3') ||
-    raw.InstanceType.startsWith('t4');
+  // Burstable instance families (t1, t2, t3, t3a, t4g, etc.)
+  const burstable = raw.InstanceType.toLowerCase().startsWith('t');
 
   // GPU properties
   const hasGpu = !!raw.GpuInfo?.Gpus && raw.GpuInfo.Gpus.length > 0;
@@ -129,12 +126,34 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
     }
   }
 
+  // Storage mapping from InstanceStorageInfo
+  let storageSummary: string | null = 'Network Storage Only (EBS)';
+  let storageSizeGib: number | null = null;
+  if (raw.InstanceStorageInfo?.TotalSizeInGB) {
+    storageSizeGib = raw.InstanceStorageInfo.TotalSizeInGB;
+    const disks = raw.InstanceStorageInfo.Disks?.[0];
+    if (disks && disks.Count && disks.SizeInGB) {
+      storageSummary = `${disks.Count} x ${disks.SizeInGB} GB NVMe SSD`;
+    } else {
+      storageSummary = `Local Temp ${raw.InstanceStorageInfo.TotalSizeInGB} GB SSD`;
+    }
+  }
+
+  // CPU Frequency directly from AWS SDK
+  const cpuFrequencyGhz = raw.ProcessorInfo.SustainedClockSpeedInGhz ?? null;
+
+  // Extract numeric generation and currentGeneration boolean
+  const { generation, currentGeneration } = parseAwsGeneration(raw.InstanceType);
+
   return {
     instanceType: raw.InstanceType,
     instanceSize: size,
+    generation,
+    currentGeneration,
     vcpu: raw.VCpuInfo.DefaultVCpus,
     memoryGib,
-    processor: resolveAwsProcessor(raw.InstanceType),
+    processor: null, // Populated dynamically from AWS Pricing API physicalProcessor attribute
+    cpuFrequencyGhz,
     burstable,
     hasGpu,
     gpuCount,
@@ -143,7 +162,32 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
     gpuManufacturer,
     networkPerformance: raw.NetworkInfo?.NetworkPerformance ?? null,
     networkBandwidthGbps: raw.NetworkInfo?.NetworkBandwidthGbps ?? null,
-    storageSummary: 'Network Storage Only (EBS)',
+    enhancedNetworking:
+      raw.NetworkInfo?.EnaSupport === 'supported' ||
+      raw.NetworkInfo?.EnaSupport === 'required' ||
+      raw.NetworkInfo?.EfaSupported === true,
+    storageSummary,
+    storageSizeGib,
+  };
+}
+
+export function parseAwsGeneration(instanceType: string): { generation: number | null; currentGeneration: boolean } {
+  const family = instanceType.split('.')[0]?.toLowerCase() || '';
+  
+  // Previous generation families explicitly listed by AWS
+  const legacyFamilies = ['t1', 'm1', 'c1', 'm2', 'cr1', 'cg1', 'hs1', 'cc1', 'cc2', 'g2', 'i2', 'r3', 'm3', 'c3', 't2'];
+  const isLegacy = legacyFamilies.includes(family);
+
+  // Extract numeric generation from family string (e.g. t1 -> 1, m5 -> 5, c6i -> 6, m7i -> 7, u7i -> 7)
+  const match = family.match(/^[a-z]+([0-9]+)/i);
+  let generation: number | null = null;
+  if (match && match[1]) {
+    generation = parseInt(match[1], 10);
+  }
+
+  return {
+    generation,
+    currentGeneration: !isLegacy,
   };
 }
 
