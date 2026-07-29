@@ -324,9 +324,18 @@ function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmIn
   return where;
 }
 
+export interface PaginatedFamilyRecommendations {
+  items: FamilyRecommendation[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+}
+
 export async function recommendFamilies(
   filters: FamilyRecommendationQuery,
-): Promise<FamilyRecommendation[]> {
+): Promise<PaginatedFamilyRecommendations> {
+  const page = filters.page || 1;
+  const pageSize = filters.pageSize || 12;
   const where = buildFamilyWhereClause(filters);
 
   const dbResults = await db.vmInstance.findMany({
@@ -397,7 +406,16 @@ export async function recommendFamilies(
 
   recommendations.sort((a, b) => b.instanceCount - a.instanceCount);
 
-  return recommendations;
+  const totalCount = recommendations.length;
+  const startIndex = (page - 1) * pageSize;
+  const paginatedItems = recommendations.slice(startIndex, startIndex + pageSize);
+
+  return {
+    items: paginatedItems,
+    totalCount,
+    page,
+    pageSize,
+  };
 }
 
 export async function getRegions(providerId?: string) {

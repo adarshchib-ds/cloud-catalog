@@ -398,6 +398,9 @@ function esc(s) {
 }
 
 /* ═══ CALCULATOR ═══ */
+let calcCurrentPage = 1;
+const calcPageSize = 12;
+
 async function onCalcProviderChange() {
   const p = document.getElementById('calc-provider').value;
   const sel = document.getElementById('calc-region');
@@ -423,6 +426,7 @@ async function onCalcProviderChange() {
 onCalcProviderChange();
 
 function clearCalcForm() {
+  calcCurrentPage = 1;
   document.getElementById('calc-provider').value = '';
   document.getElementById('calc-tenancy').value = '';
   document.getElementById('calc-gpu').value = '';
@@ -435,7 +439,8 @@ function clearCalcForm() {
 
 let lastCalcParams = {};
 
-async function calculate() {
+async function calculate(page = 1) {
+  calcCurrentPage = page;
   const btn = document.getElementById('btn-calc-search');
   btn.disabled = true;
   btn.innerHTML =
@@ -459,6 +464,9 @@ async function calculate() {
   if (vcpu) params.set('vcpu', vcpu);
   if (memory) params.set('memory', memory);
 
+  params.set('page', calcCurrentPage);
+  params.set('pageSize', calcPageSize);
+
   lastCalcParams = Object.fromEntries(params);
 
   try {
@@ -472,15 +480,18 @@ async function calculate() {
     }
 
     const families = data.data;
+    const meta = data.meta || { page: 1, pageSize: calcPageSize, totalCount: families.length, totalPages: 1 };
+    const totalFamilies = meta.totalCount || families.length;
+    const totalPages = meta.totalPages || Math.ceil(totalFamilies / calcPageSize);
     const totalInstances = families.reduce((sum, f) => sum + f.instanceCount, 0);
     const gpuFamilies = families.filter(f => f.hasGpu).length;
 
     let html = '';
 
     html += `<div class="insight-box"><div class="insight-title">&#9670; Results Summary</div><div class="insight-list">
-      <div class="insight-item"><span class="insight-bullet ib-blue">${families.length}</span><span><strong>${families.length} instance families</strong> match your criteria</span></div>
-      <div class="insight-item"><span class="insight-bullet ib-amber">${totalInstances}</span><span><strong>${totalInstances} total instances</strong> across all families</span></div>
-      ${gpuFamilies > 0 ? `<div class="insight-item"><span class="insight-bullet ib-green">${gpuFamilies}</span><span><strong>${gpuFamilies} GPU-capable families</strong> available</span></div>` : ''}
+      <div class="insight-item"><span class="insight-bullet ib-blue">${totalFamilies}</span><span><strong>${totalFamilies} instance families</strong> match your criteria</span></div>
+      <div class="insight-item"><span class="insight-bullet ib-amber">${totalInstances}</span><span><strong>${totalInstances} total instances</strong> on this page</span></div>
+      ${gpuFamilies > 0 ? `<div class="insight-item"><span class="insight-bullet ib-green">${gpuFamilies}</span><span><strong>${gpuFamilies} GPU-capable families</strong> on this page</span></div>` : ''}
     </div></div>`;
 
     html += '<div class="family-grid">';
@@ -514,6 +525,16 @@ async function calculate() {
     });
     html += '</div>';
 
+    if (totalPages > 1) {
+      html += `<div class="pagination" style="margin-top:24px;">
+        <span class="pagination-info">Page ${calcCurrentPage} of ${totalPages} (${totalFamilies} families total)</span>
+        <div class="pagination-buttons">
+          <button class="pagination-btn" onclick="changeCalcPage(-1)" ${calcCurrentPage <= 1 ? 'disabled' : ''}>Previous</button>
+          <button class="pagination-btn" onclick="changeCalcPage(1)" ${calcCurrentPage >= totalPages ? 'disabled' : ''}>Next</button>
+        </div>
+      </div>`;
+    }
+
     out.innerHTML = html;
     out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
@@ -522,6 +543,12 @@ async function calculate() {
     btn.disabled = false;
     btn.innerHTML = 'Find Families &#8594;';
   }
+}
+
+function changeCalcPage(dir) {
+  calcCurrentPage += dir;
+  if (calcCurrentPage < 1) calcCurrentPage = 1;
+  calculate(calcCurrentPage);
 }
 
 async function showFamilyInstances(familyName, providerSlug) {

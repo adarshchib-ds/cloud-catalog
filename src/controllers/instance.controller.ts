@@ -49,7 +49,16 @@ export async function recommendFamiliesController(req: Request, res: Response): 
     const filters = req.query as unknown as FamilyRecommendationQuery;
     const result = await recommendFamilies(filters);
 
-    res.status(200).json(successResponse(result));
+    res.status(200).json(
+      successResponsePaginated(
+        result.items,
+        buildPaginationMeta({
+          page: result.page,
+          pageSize: result.pageSize,
+          totalCount: result.totalCount,
+        }),
+      ),
+    );
   } catch (error) {
     logger.error('Failed to recommend families', { error, query: req.query });
 
