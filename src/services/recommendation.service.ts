@@ -52,7 +52,7 @@ export async function getSmartRecommendations(
       m.pricings?.some((p: any) => p.pricingType === targetType && Number(p.hourlyCost) > 0),
     );
 
-    // If there are none, we fall back to ON_DEMAND pricing
+    // If there are none, fallback to ON_DEMAND pricing for the same matrix
     const activeMatrices = matricesWithTargetType.length > 0 ? matricesWithTargetType : matrices;
     const resolvedType = matricesWithTargetType.length > 0 ? targetType : 'ON_DEMAND';
 
@@ -76,7 +76,7 @@ export async function getSmartRecommendations(
       return map[awsCode.toLowerCase()] || awsCode;
     };
 
-    // 1. Try exact match (Region + Tenancy + OS)
+    // Strict matching (Region + Tenancy + OS)
     let matrix = activeMatrices.find((m: any) => {
       if (
         region &&
@@ -89,22 +89,8 @@ export async function getSmartRecommendations(
       return true;
     });
 
-    // 2. Fallback: Match Region + OS (ignore tenancy)
-    if (!matrix) {
-      matrix = activeMatrices.find((m: any) => {
-        if (
-          region &&
-          !m.region?.code?.toLowerCase().includes(region.toLowerCase()) &&
-          !m.region?.code?.toLowerCase().includes(getAzureRegionCode(region).toLowerCase())
-        )
-          return false;
-        if (operatingSystem && m.operatingSystem !== operatingSystem) return false;
-        return true;
-      });
-    }
-
-    // 3. Fallback: Match Region only
-    if (!matrix) {
+    // If no strict matrix match exists for the requested filters, fallback only if filters were omitted
+    if (!matrix && !tenancy && !operatingSystem) {
       matrix = activeMatrices.find((m: any) => {
         if (
           region &&
@@ -116,16 +102,7 @@ export async function getSmartRecommendations(
       });
     }
 
-    // 4. Fallback: Match OS only
-    if (!matrix) {
-      matrix = activeMatrices.find((m: any) => {
-        if (operatingSystem && m.operatingSystem !== operatingSystem) return false;
-        return true;
-      });
-    }
-
-    // 5. Ultimate fallback: First available record
-    if (!matrix) {
+    if (!matrix && !tenancy && !operatingSystem && !region) {
       matrix = activeMatrices[0];
     }
 
@@ -145,6 +122,8 @@ export async function getSmartRecommendations(
       where: {
         isActive: true,
         isRegionAvailable: true,
+        ...(tenancy ? { tenancy } : {}),
+        ...(operatingSystem ? { operatingSystem } : {}),
       },
       include: {
         region: true,
@@ -154,48 +133,11 @@ export async function getSmartRecommendations(
   };
 
   // ── 3. Fetch matching AWS instances ───────────────────────────────────────
-  let awsInstances = (await db.vmInstance.findMany({
+  const awsInstances = (await db.vmInstance.findMany({
     where: awsWhere,
     take: 8,
     include: capabilityInclude as any,
   })) as any[];
-
-  // Fallback 1: If 0 instances matched (e.g. unseeded tenancy), try ignoring the tenancy filter
-  if (awsInstances.length === 0 && tenancy) {
-    const fallbackWhere = { ...awsWhere };
-    if (region || operatingSystem) {
-      fallbackWhere.vmCapabilityMatrix = {
-        some: {
-          isActive: true,
-          isRegionAvailable: true,
-          ...(region
-            ? { region: { code: { contains: region, mode: 'insensitive' }, isActive: true } }
-            : {}),
-          ...(operatingSystem ? { operatingSystem } : {}),
-        },
-      };
-    } else {
-      delete fallbackWhere.vmCapabilityMatrix;
-    }
-
-    awsInstances = (await db.vmInstance.findMany({
-      where: fallbackWhere,
-      take: 8,
-      include: capabilityInclude as any,
-    })) as any[];
-  }
-
-  // Fallback 2: If still 0 instances matched (e.g. unseeded region), search globally without capability matrix filter
-  if (awsInstances.length === 0 && (region || tenancy || operatingSystem)) {
-    const globalWhere = { ...awsWhere };
-    delete globalWhere.vmCapabilityMatrix;
-
-    awsInstances = (await db.vmInstance.findMany({
-      where: globalWhere,
-      take: 8,
-      include: capabilityInclude as any,
-    })) as any[];
-  }
 
   // Sort by price in memory
   awsInstances.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
@@ -228,7 +170,12 @@ export async function getSmartRecommendations(
 
   // ── 4. Get other providers ────────────────────────────────────────────────
   const otherProviders = await db.provider.findMany({
-    where: { slug: { in: ['microsoft-azure', 'gcp'] } },
+    where: {
+      OR: [
+        { id: { in: ['azure', 'gcp'] } },
+        { slug: { in: ['microsoft-azure', 'gcp', 'google-cloud-platform'] } },
+      ],
+    },
   });
   const otherProviderIds = otherProviders.map(p => p.id);
 
@@ -258,6 +205,28 @@ export async function getSmartRecommendations(
       service: { providerId: { in: otherProviderIds }, isActive: true },
       vcpu: reqVcpu,
       memoryGib: reqMemoryGib,
+      ...(tenancy || operatingSystem || region
+        ? {
+            vmCapabilityMatrix: {
+              some: {
+                isActive: true,
+                isRegionAvailable: true,
+                ...(tenancy ? { tenancy } : {}),
+                ...(operatingSystem ? { operatingSystem } : {}),
+                ...(region
+                  ? {
+                      region: {
+                        OR: [
+                          { code: { contains: region, mode: 'insensitive' } },
+                          { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
+                        ],
+                      },
+                    }
+                  : {}),
+              },
+            },
+          }
+        : {}),
     },
     include: {
       service: { include: { provider: true } },
@@ -266,6 +235,8 @@ export async function getSmartRecommendations(
         where: {
           isActive: true,
           isRegionAvailable: true,
+          ...(tenancy ? { tenancy } : {}),
+          ...(operatingSystem ? { operatingSystem } : {}),
           ...(region
             ? {
                 region: {
@@ -287,13 +258,16 @@ export async function getSmartRecommendations(
 
   // Helper to find best equivalent for azure / gcp
   const findBestEquivalent = (inst: any, providerSlug: string, awsMeta: any) => {
-    const targetSlug = providerSlug === 'azure' ? 'microsoft-azure' : providerSlug;
-    const candidates = crossCloudCandidates.filter(
-      c =>
-        c.service.provider.slug === targetSlug &&
-        c.vcpu === inst.vcpu &&
-        c.memoryGib === inst.memoryGib,
-    );
+    const candidates = crossCloudCandidates.filter(c => {
+      const pId = c.service.provider.id;
+      const pSlug = c.service.provider.slug;
+      const isMatchProvider =
+        providerSlug === 'azure'
+          ? pId === 'azure' || pSlug === 'microsoft-azure'
+          : pId === 'gcp' || pSlug === 'google-cloud-platform' || pSlug === 'gcp';
+
+      return isMatchProvider && c.vcpu === inst.vcpu && c.memoryGib === inst.memoryGib;
+    });
     if (candidates.length === 0) return null;
 
     const scored = candidates
@@ -302,15 +276,19 @@ export async function getSmartRecommendations(
         // Map costs to pass to score pricing logic
         const awsPrice = getHourlyCost(inst);
         const candPrice = getHourlyCost(c);
+        if (candPrice <= 0) return null;
+
         const { score, reasons } = calculateScore(
           awsMeta,
           candMeta,
           { ...inst, hourlyCost: awsPrice },
           { ...c, hourlyCost: candPrice },
         );
-        return { c, score, reasons, candMeta };
+        return { c, score, reasons, candMeta, candPrice };
       })
-      .sort((a, b) => b.score - a.score || getHourlyCost(a.c) - getHourlyCost(b.c));
+      .filter(Boolean) as any[];
+
+    scored.sort((a, b) => b.score - a.score || a.candPrice - b.candPrice);
 
     const best = scored[0];
     if (!best) return null;
@@ -348,4 +326,5 @@ export async function getSmartRecommendations(
     findBestEquivalent,
     findLatestGenerationEquivalent,
   );
+
 }

@@ -141,10 +141,15 @@ export function mapOperatingSystem(productName: string): OperatingSystem {
 export function mapAzureCapabilityMatrix(
   item: AzureRetailPriceItem,
 ): NormalizedVmCapabilityMatrixDTO {
+  const isDedicatedHost =
+    item.serviceName === 'Azure Dedicated Host' ||
+    item.productName.toLowerCase().includes('dedicated host') ||
+    item.skuName.toLowerCase().includes('dedicated host');
+
   return {
     regionCode: item.armRegionName,
     operatingSystem: mapOperatingSystem(item.productName),
-    tenancy: Tenancy.SHARED,
+    tenancy: isDedicatedHost ? Tenancy.DEDICATED_HOST : Tenancy.SHARED,
     licenseType: LicenseType.INCLUDED,
     isRegionAvailable: true,
     isActive: true,

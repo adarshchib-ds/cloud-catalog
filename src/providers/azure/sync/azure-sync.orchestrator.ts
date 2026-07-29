@@ -366,8 +366,21 @@ export async function syncAzure(): Promise<void> {
     const pricingMap = new Map<string, any>(); // key = capabilityId_pricingType -> pricing record
 
     for (const item of rawPricing) {
-      const vmInstanceId = instanceMap.get(item.armSkuName);
+      let vmInstanceId = instanceMap.get(item.armSkuName);
       const regionId = regionMap.get(item.armRegionName);
+
+      if (!vmInstanceId && (item.serviceName === 'Azure Dedicated Host' || item.productName?.toLowerCase().includes('dedicated host'))) {
+        const cleanSku = item.armSkuName ? item.armSkuName.split('-')[0].toLowerCase() : '';
+        if (cleanSku) {
+          for (const [instType, id] of instanceMap.entries()) {
+            const cleanInst = instType.replace('Standard_', '').replace('Basic_', '').split('_')[0].toLowerCase();
+            if (cleanInst === cleanSku || instType.toLowerCase().includes(cleanSku)) {
+              vmInstanceId = id;
+              break;
+            }
+          }
+        }
+      }
 
       if (!vmInstanceId || !regionId) {
         skipped++;

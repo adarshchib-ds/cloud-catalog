@@ -30,7 +30,11 @@ export async function fetchAzureVmSkus(): Promise<ResourceSku[]> {
   try {
     const skuList = client.resourceSkus.list();
     for await (const sku of skuList) {
-      if (sku.resourceType === 'virtualMachines') {
+      if (
+        sku.resourceType === 'virtualMachines' ||
+        sku.resourceType === 'dedicatedHosts' ||
+        sku.resourceType === 'hostGroups/hosts'
+      ) {
         skus.push(sku);
       }
     }
