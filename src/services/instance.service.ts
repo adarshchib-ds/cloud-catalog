@@ -10,6 +10,7 @@ import {
   pickFamilyFields,
 } from '../mappers/instance.mapper';
 import { computeMatchScore } from '../utils/matching.utils';
+import { calculateDetailedPricing } from '../utils/pricing';
 
 type VmInstanceWithRelations = VmInstance & {
   service: Service & { provider: Provider };
@@ -25,6 +26,32 @@ interface PaginatedInstances {
     totalInstances: number;
     gpuInstances: number;
     totalProviders: number;
+  };
+}
+
+function buildRegionFilter(regionInput: string): Prisma.RegionWhereInput {
+  const raw = regionInput.trim();
+  const cleaned = raw.replace(/\(\s*\)/g, '').trim();
+  const codeInParenMatch = cleaned.match(/\(([^()]+)\)\s*$/);
+  const codeInParen = codeInParenMatch ? codeInParenMatch[1].trim() : null;
+  const nameWithoutParen = cleaned.replace(/\([^()]*\)/g, '').trim();
+
+  const conditions: Prisma.RegionWhereInput[] = [
+    { code: { contains: cleaned, mode: 'insensitive' } },
+    { name: { contains: cleaned, mode: 'insensitive' } },
+  ];
+
+  if (codeInParen) {
+    conditions.push({ code: { contains: codeInParen, mode: 'insensitive' } });
+  }
+
+  if (nameWithoutParen && nameWithoutParen !== cleaned) {
+    conditions.push({ name: { contains: nameWithoutParen, mode: 'insensitive' } });
+  }
+
+  return {
+    OR: conditions,
+    isActive: true,
   };
 }
 
@@ -73,10 +100,7 @@ function buildWhereClause(filters: SearchInstancesQuery): Prisma.VmInstanceWhere
     };
 
     if (filters.region) {
-      matrixWhere.region = {
-        code: { contains: filters.region, mode: 'insensitive' },
-        isActive: true,
-      };
+      matrixWhere.region = buildRegionFilter(filters.region);
     }
 
     if (filters.tenancy) {
@@ -120,6 +144,10 @@ async function findEquivalents(
     include: {
       service: { include: { provider: true } },
       instanceFamily: true,
+      vmCapabilityMatrix: {
+        where: { isActive: true, isRegionAvailable: true },
+        include: { pricings: true },
+      },
     },
   });
 
@@ -144,32 +172,37 @@ async function findEquivalents(
             c.memoryGib === source.memoryGib &&
             c.hasGpu === source.hasGpu,
         )
-        .map(c => ({
-          id: c.id,
-          instanceType: c.instanceType,
-          displayName: c.displayName,
-          vcpu: c.vcpu,
-          memoryGib: c.memoryGib,
-          architecture: c.instanceFamily.architecture || 'X86_64',
-          processor: c.processor,
-          provider: pickProviderFields(c.service.provider),
-          service: pickServiceFields(c.service),
-          matchScore: computeMatchScore(
-            { vcpu: source.vcpu, memoryGib: source.memoryGib },
-            { vcpu: c.vcpu, memoryGib: c.memoryGib },
-            vcpuRange,
-            memRange,
-          ),
-          burstable: c.burstable,
-          currentGeneration: c.currentGeneration,
-          storageType: c.storageType,
-          storageSizeGib: c.storageSizeGib,
-          storageIops: c.storageIops !== null ? Number(c.storageIops) : null,
-          networkPerformance: c.networkPerformance,
-          gpuCount: c.gpuCount,
-          gpuModel: c.gpuModel,
-          gpuMemoryGib: c.gpuMemoryGib,
-        }))
+        .map(c => {
+          const candCost = resolveHourlyCost(c);
+          const pricingInfo = calculateDetailedPricing(candCost);
+          return {
+            id: c.id,
+            instanceType: c.instanceType,
+            displayName: c.displayName,
+            vcpu: c.vcpu,
+            memoryGib: c.memoryGib,
+            architecture: c.instanceFamily.architecture || 'X86_64',
+            processor: c.processor,
+            provider: pickProviderFields(c.service.provider),
+            service: pickServiceFields(c.service),
+            matchScore: computeMatchScore(
+              { vcpu: source.vcpu, memoryGib: source.memoryGib },
+              { vcpu: c.vcpu, memoryGib: c.memoryGib },
+              vcpuRange,
+              memRange,
+            ),
+            burstable: c.burstable,
+            currentGeneration: c.currentGeneration,
+            storageType: c.storageType,
+            storageSizeGib: c.storageSizeGib,
+            storageIops: c.storageIops !== null ? Number(c.storageIops) : null,
+            networkPerformance: c.networkPerformance,
+            gpuCount: c.gpuCount,
+            gpuModel: c.gpuModel,
+            gpuMemoryGib: c.gpuMemoryGib,
+            ...pricingInfo,
+          };
+        })
         .sort((a, b) => b.matchScore - a.matchScore)
         .slice(0, MAX_EQUIVALENTS_PER_PROVIDER);
 
@@ -194,9 +227,11 @@ function resolveHourlyCost(inst: any, filters?: SearchInstancesQuery): number | 
   let candidates = [...onDemandMatrices];
 
   if (filters?.region) {
-    const rCode = filters.region.toLowerCase();
+    const raw = filters.region.trim().toLowerCase();
+    const clean = raw.replace(/\(\s*\)/g, '').trim();
     const regionMatches = candidates.filter((m: any) =>
-      m.region?.code?.toLowerCase().includes(rCode),
+      m.region?.code?.toLowerCase().includes(clean) ||
+      m.region?.name?.toLowerCase().includes(clean)
     );
     if (regionMatches.length > 0) candidates = regionMatches;
   }
@@ -308,10 +343,7 @@ function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmIn
     };
 
     if (filters.region) {
-      matrixWhere.region = {
-        code: { contains: filters.region, mode: 'insensitive' },
-        isActive: true,
-      };
+      matrixWhere.region = buildRegionFilter(filters.region);
     }
 
     if (filters.tenancy) {

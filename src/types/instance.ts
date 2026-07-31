@@ -50,6 +50,14 @@ export interface InstanceSpec {
   enhancedNetworking: boolean;
   currentGeneration: boolean;
   hourlyCost?: number | null;
+  monthlyCost?: number | null;
+  onDemandHourlyCostMin?: number | null;
+  onDemandHourlyCostMax?: number | null;
+  onDemandMonthlyCostMin?: number | null;
+  onDemandMonthlyCostMax?: number | null;
+  formattedHourly?: string | null;
+  formattedMonthly?: string | null;
+  formattedRange?: string | null;
 }
 
 export interface EquivalentInstance {
@@ -72,6 +80,15 @@ export interface EquivalentInstance {
   gpuCount: number | null;
   gpuModel: string | null;
   gpuMemoryGib: number | null;
+  hourlyCost?: number | null;
+  monthlyCost?: number | null;
+  onDemandHourlyCostMin?: number | null;
+  onDemandHourlyCostMax?: number | null;
+  onDemandMonthlyCostMin?: number | null;
+  onDemandMonthlyCostMax?: number | null;
+  formattedHourly?: string | null;
+  formattedMonthly?: string | null;
+  formattedRange?: string | null;
 }
 
 export interface EquivalentsMap {

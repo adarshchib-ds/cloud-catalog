@@ -270,7 +270,21 @@
         <div class="modal-item" id="item-storage-iops"><span class="modal-label">Storage IOPS</span><span id="modal-storage-iops" class="modal-value mono">--</span></div>
         <div class="modal-item" id="item-network"><span class="modal-label">Network</span><span id="modal-network" class="modal-value">--</span></div>
         <div class="modal-item" id="item-gpu" style="grid-column: span 2;"><span class="modal-label">GPU Info</span><span id="modal-gpu" class="modal-value mono">--</span></div>
-        <div class="modal-item" id="item-monthly-cost"><span class="modal-label">Estimated Monthly Price</span><span id="modal-monthly-cost" class="modal-value mono" style="color:var(--green); font-weight:700;">--</span></div>
+        <div class="modal-item modal-item-price" id="item-monthly-cost" style="grid-column: span 2;">
+          <div class="modal-price-header">
+            <span class="modal-label" style="color: #00B86B; font-weight: 800;">Estimated Pricing</span>
+          </div>
+          <div class="modal-price-badges">
+            <div class="price-pill price-pill-hourly">
+              <span class="price-pill-label">Hourly Rate</span>
+              <span id="modal-price-hourly" class="price-pill-val">--</span>
+            </div>
+            <div class="price-pill price-pill-monthly">
+              <span class="price-pill-label">Monthly Estimate (720 hrs)</span>
+              <span id="modal-price-monthly" class="price-pill-val">--</span>
+            </div>
+          </div>
+        </div>
         <div class="modal-item" id="item-burstable"><span class="modal-label">Burstable</span><span id="modal-burstable" class="modal-value">--</span></div>
         <div class="modal-item" id="item-generation"><span class="modal-label">Current Generation</span><span id="modal-generation" class="modal-value">--</span></div>
         <div class="modal-item" id="item-score" style="grid-column: span 2;"><span class="modal-label">Match Score / Status</span><span id="modal-score" class="modal-value">--</span></div>

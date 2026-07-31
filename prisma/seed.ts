@@ -213,6 +213,7 @@ function compileInstanceData(providerId: string, product: InfracostProduct): Omi
     gpuCount,
     gpuModel,
     gpuMemoryGib,
+    storageSummary: product.attributes.storage || 'SSD',
   };
 }
 
@@ -416,6 +417,7 @@ async function seed() {
             processor: compiled.processor,
             burstable: compiled.instanceFamilySlug.startsWith('t') || compiled.instanceFamilySlug.startsWith('e'),
             storageType: 'SSD',
+            storageSummary: compiled.storageSummary,
             hasGpu: compiled.hasGpu,
             gpuCount: compiled.gpuCount,
             gpuModel: compiled.gpuModel,
@@ -431,6 +433,7 @@ async function seed() {
             processor: compiled.processor,
             burstable: compiled.instanceFamilySlug.startsWith('t') || compiled.instanceFamilySlug.startsWith('e'),
             storageType: 'SSD',
+            storageSummary: compiled.storageSummary,
             hasGpu: compiled.hasGpu,
             gpuCount: compiled.gpuCount,
             gpuModel: compiled.gpuModel,

@@ -1,10 +1,13 @@
 import { VmInstance, Service, Provider, InstanceFamily } from '@prisma/client';
 import { InstanceSpec, ServiceSummary, ProviderSummary, FamilySummary } from '@/types';
+import { calculateDetailedPricing } from '../utils/pricing';
 
 export function pickInstanceFields(
   row: VmInstance & { instanceFamily: InstanceFamily },
   hourlyCost?: number | null,
 ): InstanceSpec {
+  const pricingInfo = calculateDetailedPricing(hourlyCost);
+
   return {
     id: row.id,
     instanceType: row.instanceType,
@@ -37,7 +40,7 @@ export function pickInstanceFields(
     networkBandwidthGbps: row.networkBandwidthGbps,
     enhancedNetworking: row.enhancedNetworking,
     currentGeneration: row.currentGeneration,
-    hourlyCost: hourlyCost !== undefined ? hourlyCost : null,
+    ...pricingInfo,
   };
 }
 

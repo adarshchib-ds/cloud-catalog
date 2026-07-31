@@ -353,7 +353,7 @@ function renderTable() {
       <td>${esc(inst.architecture)}</td>
       <td>${esc(inst.processor || '--')}</td>
       <td>${esc(item.family.name)}</td>
-      <td>${esc(inst.storageSummary || inst.storageType || '--')}</td>
+      <td>${esc(inst.storageSummary || inst.storageType || (inst.storageSizeGib ? inst.storageSizeGib + ' GB SSD' : null) || 'SSD')}</td>
       <td class="td-mono">${inst.hourlyCost ? '$' + Number(inst.hourlyCost).toFixed(4) : '--'}</td>
     </tr>`;
     html += `<tr class="detail-row ${isOpen ? 'open' : ''}" id="detail-${inst.id}"><td colspan="10"><div class="detail-grid">
@@ -399,7 +399,18 @@ function esc(s) {
 
 /* ═══ CALCULATOR ═══ */
 let calcCurrentPage = 1;
-const calcPageSize = 12;
+let calcPageSize = 12;
+
+function changeCalcPageSize(newSize) {
+  calcPageSize = parseInt(newSize, 10) || 12;
+  calcCurrentPage = 1;
+  calculate(1);
+}
+
+function goToCalcPage(page) {
+  const pageNum = parseInt(page, 10) || 1;
+  calculate(pageNum);
+}
 
 async function onCalcProviderChange() {
   const p = document.getElementById('calc-provider').value;
@@ -438,6 +449,47 @@ function clearCalcForm() {
 }
 
 let lastCalcParams = {};
+
+function renderCalcPaginationControls(totalFamilies, totalPages) {
+  let pageOptions = '';
+  for (let i = 1; i <= totalPages; i++) {
+    pageOptions += `<option value="${i}" ${i === calcCurrentPage ? 'selected' : ''}>Page ${i} of ${totalPages}</option>`;
+  }
+
+  const pageSizeOptions = [12, 24, 48]
+    .map(
+      size =>
+        `<option value="${size}" ${size === calcPageSize ? 'selected' : ''}>${size} per page</option>`,
+    )
+    .join('');
+
+  const startIdx = (calcCurrentPage - 1) * calcPageSize + 1;
+  const endIdx = Math.min(calcCurrentPage * calcPageSize, totalFamilies);
+
+  return `
+    <div class="calc-pagination-bar">
+      <div class="calc-pagination-left">
+        <span class="pagination-info">Showing <strong>${startIdx}–${endIdx}</strong> of <strong>${totalFamilies}</strong> families</span>
+      </div>
+      <div class="calc-pagination-right">
+        <label class="calc-page-label">Show:
+          <select class="form-select calc-select-sm" onchange="changeCalcPageSize(this.value)">
+            ${pageSizeOptions}
+          </select>
+        </label>
+        <label class="calc-page-label">Jump to:
+          <select class="form-select calc-select-sm" onchange="goToCalcPage(this.value)">
+            ${pageOptions}
+          </select>
+        </label>
+        <div class="pagination-buttons">
+          <button class="pagination-btn" onclick="changeCalcPage(-1)" ${calcCurrentPage <= 1 ? 'disabled' : ''}>&#8592; Prev</button>
+          <button class="pagination-btn" onclick="changeCalcPage(1)" ${calcCurrentPage >= totalPages ? 'disabled' : ''}>Next &#8594;</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 async function calculate(page = 1) {
   calcCurrentPage = page;
@@ -494,6 +546,10 @@ async function calculate(page = 1) {
       ${gpuFamilies > 0 ? `<div class="insight-item"><span class="insight-bullet ib-green">${gpuFamilies}</span><span><strong>${gpuFamilies} GPU-capable families</strong> on this page</span></div>` : ''}
     </div></div>`;
 
+    if (totalFamilies > 0) {
+      html += renderCalcPaginationControls(totalFamilies, totalPages);
+    }
+
     html += '<div class="family-grid">';
     families.forEach(f => {
       const providerBadge = `<span class="td-badge td-badge-${f.provider.slug}">${f.provider.slug.toUpperCase()}</span>`;
@@ -525,14 +581,8 @@ async function calculate(page = 1) {
     });
     html += '</div>';
 
-    if (totalPages > 1) {
-      html += `<div class="pagination" style="margin-top:24px;">
-        <span class="pagination-info">Page ${calcCurrentPage} of ${totalPages} (${totalFamilies} families total)</span>
-        <div class="pagination-buttons">
-          <button class="pagination-btn" onclick="changeCalcPage(-1)" ${calcCurrentPage <= 1 ? 'disabled' : ''}>Previous</button>
-          <button class="pagination-btn" onclick="changeCalcPage(1)" ${calcCurrentPage >= totalPages ? 'disabled' : ''}>Next</button>
-        </div>
-      </div>`;
+    if (totalFamilies > 0) {
+      html += renderCalcPaginationControls(totalFamilies, totalPages);
     }
 
     out.innerHTML = html;
@@ -615,7 +665,7 @@ async function showFamilyInstances(familyName, providerSlug) {
         <td class="td-mono">${inst.memoryGib} GB</td>
         <td>${esc(inst.architecture)}</td>
         <td>${esc(inst.processor || '--')}</td>
-        <td>${esc(inst.storageType || '--')}</td>
+        <td>${esc(inst.storageSummary || inst.storageType || (inst.storageSizeGib ? inst.storageSizeGib + ' GB SSD' : null) || 'SSD')}</td>
       </tr>`;
       html += `<tr class="detail-row ${isOpen ? 'open' : ''}" id="detail-${inst.id}"><td colspan="7"><div class="detail-grid">
         <div class="detail-item"><span class="detail-label">CPU Frequency</span><span class="detail-value mono">${inst.cpuFrequencyGhz ? inst.cpuFrequencyGhz + ' GHz' : '--'}</span></div>
@@ -699,6 +749,11 @@ async function showFamilyInstances(familyName, providerSlug) {
         });
 
         html += '</div>';
+      } else {
+        html += '<div class="equiv-section" style="padding: 24px; text-align: center; color: var(--text-3); font-size: 13px;">';
+        html += '<div class="equiv-section-header" style="justify-content: center; margin-bottom: 8px;">&#9878; Cross-Cloud Equivalents</div>';
+        html += '<div style="color: var(--text-2); font-weight: 500;">No exact cross-cloud equivalent instances are currently available for this family tier across Azure or GCP.</div>';
+        html += '</div>';
       }
     }
 
@@ -778,43 +833,33 @@ function showInstanceDetails(element) {
     data.currentGeneration ? 'Yes (Current Gen)' : 'No (Previous Generation)',
   );
 
-  // Bind monthly/hourly cost estimation with range support
-  const hMin = data.onDemandHourlyCostMin || data.onDemandHourlyCost || data.hourlyCost;
-  const hMax = data.onDemandHourlyCostMax || data.onDemandHourlyCost || data.hourlyCost;
-  const mMin = data.onDemandMonthlyCostMin || (Number(hMin) * 720).toFixed(2);
-  const mMax = data.onDemandMonthlyCostMax || (Number(hMax) * 720).toFixed(2);
+  // Bind monthly/hourly cost estimation directly from backend pre-calculated fields
+  const hourlyText = data.formattedHourly || (data.hourlyCost ? `$${Number(data.hourlyCost).toFixed(4)} / hr` : '--');
+  const monthlyText = data.formattedMonthly || (data.monthlyCost ? `$${Number(data.monthlyCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / mo` : '--');
 
-  let costRangeText = '';
-  if (hMin && hMax) {
-    if (hMin === hMax) {
-      costRangeText = `$${Number(hMin).toFixed(4)}/hr (≈ $${Number(mMin).toFixed(2)}/mo)`;
+  const hourlyEl = document.getElementById('modal-price-hourly');
+  const monthlyEl = document.getElementById('modal-price-monthly');
+  const costWrapper = document.getElementById('item-monthly-cost');
+
+  if (hourlyEl && monthlyEl && costWrapper) {
+    if (hourlyText === '--' && monthlyText === '--') {
+      costWrapper.style.display = 'none';
     } else {
-      costRangeText = `$${Number(hMin).toFixed(4)} - $${Number(hMax).toFixed(4)}/hr (≈ $${Number(mMin).toFixed(2)} - $${Number(mMax).toFixed(2)}/mo)`;
+      hourlyEl.innerText = hourlyText;
+      monthlyEl.innerText = monthlyText;
+      costWrapper.style.display = 'block';
     }
   }
-  updateItem('monthly-cost', costRangeText);
 
   // Bind generation-based recommendation upgrade
   const upgradeWrapper = document.getElementById('item-rec-upgrade');
   const upgradeSpan = document.getElementById('modal-rec-upgrade');
   if (!data.currentGeneration && data.recommendation) {
-    const recHMin =
-      data.recommendation.onDemandHourlyCostMin || data.recommendation.onDemandHourlyCost;
-    const recHMax =
-      data.recommendation.onDemandHourlyCostMax || data.recommendation.onDemandHourlyCost;
-    const recMMin =
-      data.recommendation.onDemandMonthlyCostMin || (Number(recHMin) * 720).toFixed(2);
-    const recMMax =
-      data.recommendation.onDemandMonthlyCostMax || (Number(recHMax) * 720).toFixed(2);
-
-    let recRangeText = '';
-    if (recHMin && recHMax) {
-      if (recHMin === recHMax) {
-        recRangeText = `$${Number(recHMin).toFixed(4)}/hr (≈ $${Number(recMMin).toFixed(2)}/mo)`;
-      } else {
-        recRangeText = `$${Number(recHMin).toFixed(4)} - $${Number(recHMax).toFixed(4)}/hr (≈ $${Number(recMMin).toFixed(2)} - $${Number(recMMax).toFixed(2)}/mo)`;
-      }
-    }
+    const recRangeText =
+      data.recommendation.formattedRange ||
+      (data.recommendation.onDemandHourlyCost && data.recommendation.onDemandMonthlyCost
+        ? `$${Number(data.recommendation.onDemandHourlyCost).toFixed(4)}/hr (≈ $${Number(data.recommendation.onDemandMonthlyCost).toFixed(2)}/mo)`
+        : '');
 
     upgradeSpan.innerHTML = `Use <strong style="font-family:monospace; color:var(--text);">${esc(data.recommendation.recommendedInstance)}</strong> (Current Gen)<br>
                              Price Range: ${recRangeText}`;

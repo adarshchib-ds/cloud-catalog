@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const tenancySchema = z
+  .preprocess(val => {
+    if (typeof val === 'string') {
+      const normalized = val.toUpperCase().trim();
+      if (normalized === 'ANY' || normalized === 'ALL' || normalized === '') return undefined;
+      return normalized;
+    }
+    return val;
+  }, z.enum(['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT']).optional())
+  .optional();
+
 const searchInstancesQuerySchema = z.object({
   provider: z
     .preprocess(
@@ -9,7 +20,7 @@ const searchInstancesQuerySchema = z.object({
     .optional(),
   region: z.string().min(1).max(50).optional(),
   service: z.string().min(1).max(100).optional(),
-  tenancy: z.enum(['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT']).optional(),
+  tenancy: tenancySchema,
   instanceFamily: z.string().min(1).max(100).optional(),
   architecture: z
     .preprocess(
@@ -23,10 +34,16 @@ const searchInstancesQuerySchema = z.object({
   maxMemory: z.coerce.number().min(0).optional(),
   hasGpu: z
     .preprocess(val => {
-      if (val === 'true') return true;
-      if (val === 'false') return false;
+      if (typeof val === 'string') {
+        const normalized = val.toLowerCase().trim();
+        if (normalized === 'true' || normalized === 'gpu') return true;
+        if (normalized === 'false' || normalized === 'no_gpu' || normalized === 'no gpu' || normalized === 'nogpu') return false;
+        if (normalized === 'any' || normalized === 'all' || normalized === '') return undefined;
+      }
+      if (val === true) return true;
+      if (val === false) return false;
       return val;
-    }, z.boolean())
+    }, z.boolean().optional())
     .optional(),
   search: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -36,15 +53,21 @@ const searchInstancesQuerySchema = z.object({
 const familyRecommendationSchema = z.object({
   provider: z.enum(['aws', 'azure', 'gcp']).optional(),
   region: z.string().min(1).max(50).optional(),
-  tenancy: z.enum(['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT']).optional(),
+  tenancy: tenancySchema,
   vcpu: z.coerce.number().int().min(1).optional(),
   memory: z.coerce.number().min(0).optional(),
   hasGpu: z
     .preprocess(val => {
-      if (val === 'true') return true;
-      if (val === 'false') return false;
+      if (typeof val === 'string') {
+        const normalized = val.toLowerCase().trim();
+        if (normalized === 'true' || normalized === 'gpu') return true;
+        if (normalized === 'false' || normalized === 'no_gpu' || normalized === 'no gpu' || normalized === 'nogpu') return false;
+        if (normalized === 'any' || normalized === 'all' || normalized === '') return undefined;
+      }
+      if (val === true) return true;
+      if (val === false) return false;
       return val;
-    }, z.boolean())
+    }, z.boolean().optional())
     .optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(12),
@@ -58,7 +81,7 @@ const smartRecommendationSchema = z.object({
   reqVcpu: z.coerce.number().int().min(1),
   reqMemoryGib: z.coerce.number().min(0),
   region: z.string().min(1).max(100).optional(),
-  tenancy: z.enum(['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT']).optional(),
+  tenancy: tenancySchema,
   operatingSystem: z.enum(['LINUX', 'WINDOWS', 'UBUNTU', 'RED_HAT', 'SUSE']).optional(),
   pricingModel: z.enum(['ON_DEMAND', 'SPOT', 'RESERVED', 'COMMITMENT']).optional(),
 });
