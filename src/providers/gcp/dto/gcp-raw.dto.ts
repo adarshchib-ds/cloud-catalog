@@ -25,6 +25,11 @@ export const GcpRawMachineTypeSchema = z.object({
       }),
     )
     .optional(),
+  deprecated: z
+    .object({
+      state: z.string().optional(),
+    })
+    .optional(),
 });
 export type GcpRawMachineType = z.infer<typeof GcpRawMachineTypeSchema>;
 

@@ -5,6 +5,7 @@ import { fetchAzureVmPricing } from '../services/azure-pricing.service';
 import { fetchAzureVmSkus } from '../services/azure-client.service';
 import { fetchSeriesFileList, fetchRawMarkdown } from '../services/azure-docs.service';
 import { parseSeriesMarkdown } from '../documentation/azure-docs.parser';
+import { fetchAzureLifecycleLookup } from '../services/azure-lifecycle.service';
 import {
   mapAzureRegion,
   mapAzureInstanceFamily,
@@ -219,10 +220,12 @@ export async function syncAzure(): Promise<void> {
       logger.warn(`Failed querying GitHub Docs API: ${err}`);
     }
 
-    // 6. Sync VM Instances
-    logger.info('Syncing Azure VM Instances...');
+    // 6. Sync VM Instances with Official Microsoft Lifecycle Resolver
+    logger.info('Fetching official Microsoft Azure Lifecycle documentation...');
+    const lifecycleLookup = await fetchAzureLifecycleLookup();
+    logger.info('Syncing Azure VM Instances with official lifecycle metadata...');
     const skuNames = rawSkus.map(s => s.name!).filter(Boolean);
-    const generationMap = determineCurrentGeneration(skuNames);
+    const generationMap = determineCurrentGeneration(skuNames, lifecycleLookup);
 
     // Fetch existing VM instances to determine what needs to be created vs updated
     const existingVmInstances = await prisma.vmInstance.findMany({
@@ -422,29 +425,6 @@ export async function syncAzure(): Promise<void> {
           pricingType: pricingType,
           hourlyCost: normPricing.hourlyCost,
         });
-      }
-
-      // Generate static Reservation discount pricing representation if missing (~30% off On-Demand)
-      if (pricingType === 'ON_DEMAND') {
-        const reservedKey = `${capabilityId}_RESERVED`;
-        if (!pricingMap.has(reservedKey)) {
-          pricingMap.set(reservedKey, {
-            id: uuidv4(),
-            capabilityMatrixId: capabilityId,
-            pricingType: 'RESERVED',
-            hourlyCost: normPricing.hourlyCost * 0.7,
-          });
-        }
-
-        const commitmentKey = `${capabilityId}_COMMITMENT`;
-        if (!pricingMap.has(commitmentKey)) {
-          pricingMap.set(commitmentKey, {
-            id: uuidv4(),
-            capabilityMatrixId: capabilityId,
-            pricingType: 'COMMITMENT',
-            hourlyCost: normPricing.hourlyCost * 0.7,
-          });
-        }
       }
     }
 

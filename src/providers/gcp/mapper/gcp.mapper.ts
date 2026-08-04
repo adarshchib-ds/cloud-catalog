@@ -1,4 +1,4 @@
-import { Architecture, ProcessorManufacturer, PricingType } from '@prisma/client';
+import { Architecture, ProcessorManufacturer, PricingType, Tenancy } from '@prisma/client';
 import { GcpRawRegion, GcpRawMachineType, GcpRawSku } from '../dto/gcp-raw.dto';
 import {
   NormalizedRegionDTO,
@@ -97,18 +97,42 @@ export function resolveGcpCpuFrequency(machineTypeName: string): number | null {
   return null;
 }
 
-export function resolveGcpEnhancedNetworking(_machineTypeName: string): boolean {
-  // Enhanced NIC is specific to AWS (ENA) / Azure (Accelerated Networking). GCP operates on native infrastructure.
-  return false;
+export function resolveGcpEnhancedNetworking(machineTypeName: string): boolean {
+  const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
+  // Compute Engine gVNIC / Tier 1 networking supported series per official Google Cloud documentation
+  return ['c3', 'c3d', 'c4', 'c4a', 'c4d', 'n2', 'n2d', 'n4', 'z3', 'h3', 'm3', 'm4', 'a3', 'g2'].includes(familyToken);
 }
 
-export function resolveGcpCurrentGeneration(machineTypeName: string): boolean {
+export function resolveGcpCurrentGeneration(machineTypeName: string, deprecatedState?: string): boolean {
+  if (deprecatedState && deprecatedState.trim() !== '') {
+    const isDeprecated = ['DEPRECATED', 'OBSOLETE', 'DELETED'].includes(deprecatedState.toUpperCase());
+    return !isDeprecated;
+  }
   const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
   const legacyFamilies = ['n1', 'f1-micro', 'g1-small', 'm1'];
   if (legacyFamilies.includes(familyToken) || machineTypeName === 'f1-micro' || machineTypeName === 'g1-small') {
     return false;
   }
   return true;
+}
+
+/**
+ * Derives GCP tenancy from the official machine type name.
+ *
+ * GCP Sole-Tenant Nodes are identified by the "-node-" segment in their
+ * machine type name as documented by Google:
+ * https://cloud.google.com/compute/docs/nodes/sole-tenant-nodes
+ *
+ * Examples:
+ *   n2-node-80-640   → SOLE_TENANT
+ *   n1-node-96-624   → SOLE_TENANT
+ *   c2-node-60-240   → SOLE_TENANT
+ *   e2-standard-4    → SHARED
+ *   n2-standard-8    → SHARED
+ *   t2a-standard-1   → SHARED
+ */
+export function resolveGcpTenancy(machineTypeName: string): Tenancy {
+  return /-node-/i.test(machineTypeName) ? Tenancy.SOLE_TENANT : Tenancy.SHARED;
 }
 
 export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
@@ -119,34 +143,49 @@ export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
   const firstAccelerator = raw.accelerators?.[0];
   const burstable = raw.isSharedCpu === true || raw.name === 'f1-micro' || raw.name === 'g1-small' || raw.name.startsWith('e2-micro') || raw.name.startsWith('e2-small') || raw.name.startsWith('e2-medium');
 
+  let gpuManufacturer: string | null = null;
+  if (hasGpu && firstAccelerator?.guestAcceleratorType) {
+    const token = firstAccelerator.guestAcceleratorType.toLowerCase();
+    if (token.startsWith('nvidia')) gpuManufacturer = 'NVIDIA';
+    else if (token.startsWith('tpu')) gpuManufacturer = 'GOOGLE';
+    else if (token.startsWith('amd')) gpuManufacturer = 'AMD';
+    else gpuManufacturer = token.split('-')[0].toUpperCase();
+  }
+
   return {
     instanceType: raw.name,
     instanceSize,
+    displayName: raw.description && raw.description.trim() ? raw.description : `GCP ${raw.name}`,
     vcpu: raw.guestCpus,
     memoryGib: parseFloat((raw.memoryMb / 1024).toFixed(3)),
     processor: resolveGcpProcessor(raw.name),
     cpuFrequencyGhz: resolveGcpCpuFrequency(raw.name),
     burstable,
     enhancedNetworking: resolveGcpEnhancedNetworking(raw.name),
-    currentGeneration: resolveGcpCurrentGeneration(raw.name),
+    currentGeneration: resolveGcpCurrentGeneration(raw.name, raw.deprecated?.state),
     hasGpu,
     gpuCount: firstAccelerator?.guestAcceleratorCount ?? null,
     gpuModel: firstAccelerator?.guestAcceleratorType ?? null,
     gpuMemoryGib: null,
-    gpuManufacturer: hasGpu ? 'NVIDIA' : null,
+    gpuManufacturer,
     networkPerformance: resolveGcpEnhancedNetworking(raw.name) ? 'gVNIC Tier 1' : 'Standard',
     networkBandwidthGbps: null,
     storageSummary: 'Network Storage Only (Persistent Disk)',
+    supportsLiveMigration: !hasGpu, // Google Cloud Compute Engine default maintenance policy is MIGRATE for all standard non-GPU shapes
+    supportsNestedVirtualization: !raw.name.startsWith('t2a') && !raw.name.startsWith('c4a'), // Supported on all x86_64 KVM hypervisor shapes (Intel VT-x / AMD-V)
   };
 }
 
-export function mapCapabilityMatrix(regionCode: string): NormalizedVmCapabilityMatrixDTO {
+export function mapCapabilityMatrix(
+  regionCode: string,
+  machineTypeName: string,
+): NormalizedVmCapabilityMatrixDTO {
   // GCP's base Compute Engine price is OS-agnostic (Linux has no license fee); Windows/RHEL/SUSE
   // licensing is priced via separate SKUs not composed here — see plan's deferred-scope notes.
   return {
     regionCode,
     operatingSystem: 'LINUX',
-    tenancy: 'SHARED',
+    tenancy: resolveGcpTenancy(machineTypeName),
     licenseType: 'INCLUDED',
     isRegionAvailable: true,
     isActive: true,
@@ -212,7 +251,9 @@ const KNOWN_GCP_FAMILY_TOKENS = [
 // "Reserved ... in <region>" wording), Dynamic Workload Scheduler, and surcharge/premium add-ons.
 const SKU_EXCLUSION_KEYWORDS = [
   'custom',
-  'sole tenancy',
+  // 'sole tenancy' removed: Sole-Tenant Node pricing SKUs are now ingested.
+  // The surcharge is the actual cost of running on a node template and must
+  // be composed the same way as standard CPU/RAM component SKUs.
   'reserved',
   'dws',
   'premium',

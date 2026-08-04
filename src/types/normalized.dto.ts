@@ -1,7 +1,6 @@
 import {
   Architecture,
   ProcessorManufacturer,
-  OperatingSystem,
   Tenancy,
   LicenseType,
   PricingType,
@@ -27,6 +26,7 @@ export interface NormalizedVmInstanceDTO {
   instanceFamilyId?: string; // Set by Sync Orchestrator
   instanceType: string;
   instanceSize: string;
+  displayName?: string | null;
   vcpu: number;
   memoryGib: number;
   processor: string | null;
@@ -55,7 +55,7 @@ export interface NormalizedVmInstanceDTO {
 export interface NormalizedVmCapabilityMatrixDTO {
   vmInstanceId?: string; // Set dynamically
   regionCode: string; // Mapped to Region ID by repository
-  operatingSystem: OperatingSystem;
+  operatingSystem: string;
   tenancy: Tenancy;
   licenseType: LicenseType | null;
   isRegionAvailable: boolean;
