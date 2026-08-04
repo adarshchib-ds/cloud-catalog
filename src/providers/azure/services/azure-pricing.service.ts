@@ -11,7 +11,7 @@ export async function fetchAzureVmPricing(): Promise<AzureRetailPriceItem[]> {
 
   // Filter for consumption prices of Virtual Machines and Azure Dedicated Host
   let nextUrl: string | undefined =
-    `https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=(serviceName eq 'Virtual Machines' or serviceName eq 'Azure Dedicated Host') and priceType eq 'Consumption'`;
+    `https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=(serviceName eq 'Virtual Machines' or serviceName eq 'Azure Dedicated Host')`;
   let pageCount = 0;
 
   while (nextUrl) {

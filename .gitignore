@@ -22,6 +22,7 @@ gcp-service-account.json
 
 # Temporary / Internal Scratch Scripts & Data (DO NOT COMMIT SECRETS)
 scripts/seedAndPrice.ts
+scripts/*.json
 backup-db.js
 prisma/seed-data.json
 prisma/backups/

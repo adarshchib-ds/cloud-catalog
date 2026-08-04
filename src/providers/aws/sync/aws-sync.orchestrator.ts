@@ -24,9 +24,12 @@ import { upsertProvider } from '../../../repositories/provider.repository';
 import { getRegionMap } from '../../../repositories/region.repository';
 import { getInstanceFamilyMap } from '../../../repositories/instance-family.repository';
 import { getVmInstanceMap } from '../../../repositories/vm-instance.repository';
+import { syncLockService } from '../../../services/sync-lock.service';
 
 export async function syncAws(): Promise<void> {
-  logger.info('Starting AWS Synchronization Ingestion Pipeline (Optimized Batch Edition)...');
+  await syncLockService.executeWithLock('aws', async () => {
+    logger.info('Starting AWS Synchronization Ingestion Pipeline (Optimized Batch Edition)...');
+    const startTime = new Date();
 
   try {
     // 1. Ensure Provider Record exists
@@ -199,7 +202,28 @@ export async function syncAws(): Promise<void> {
       capabilityLookup.set(key, cap.id);
     }
 
-    for (const regionCode of activeRegions) {
+    // Bounded worker pool helper for parallel region processing
+    const mapConcurrent = async <T>(
+      items: T[],
+      concurrencyLimit: number,
+      fn: (item: T) => Promise<void>,
+    ): Promise<void> => {
+      const queue = [...items];
+      const workers = Array.from({ length: Math.min(concurrencyLimit, items.length) }, async () => {
+        while (queue.length > 0) {
+          const item = queue.shift();
+          if (item !== undefined) {
+            await fn(item);
+          }
+        }
+      });
+      await Promise.all(workers);
+    };
+
+    const CONCURRENCY_LIMIT = 5;
+    logger.info(`Processing ${activeRegions.length} AWS regions with bounded concurrency limit of ${CONCURRENCY_LIMIT}...`);
+
+    await mapConcurrent(activeRegions, CONCURRENCY_LIMIT, async (regionCode) => {
       try {
         logger.info(`Fetching and processing prices for region: ${regionCode}...`);
         const regionId = regionMap.get(regionCode)!;
@@ -315,7 +339,7 @@ export async function syncAws(): Promise<void> {
 
           // Ingest Spot Pricing from EC2 SDK
           const spotPrice = spotPrices.get(instType);
-          if (spotPrice !== undefined && spotPrice > 0) {
+          if (spotPrice !== undefined && spotPrice > 0 && spotPrice < 999999) {
             const spotKey = `${capabilityId}_SPOT`;
             pricingMap.set(spotKey, {
               id: uuidv4(),
@@ -339,7 +363,7 @@ export async function syncAws(): Promise<void> {
           `Failed to process prices for region ${regionCode}. Skipping. Reason: ${err.message || err}`,
         );
       }
-    }
+    });
 
     const pricingList = Array.from(pricingMap.values());
 
@@ -397,9 +421,25 @@ export async function syncAws(): Promise<void> {
       }
     }
 
-    logger.info('AWS Ingestion Synchronization completed successfully.');
+    const endTime = new Date();
+    const durationSeconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+
+    logger.info('AWS Ingestion Synchronization Completed Successfully', {
+      telemetry: {
+        provider: 'aws',
+        status: 'SUCCESS',
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        durationSeconds,
+        totalRegionsProcessed: activeRegions.length,
+        vmInstancesCreated: vmsToCreate.length,
+        capabilitiesCreated: capabilitiesToCreate.length,
+        pricingRecordsInserted: pricingList.length,
+      },
+    });
   } catch (error) {
     logger.error('AWS Ingestion Pipeline failed:', error);
     throw error;
   }
+  });
 }

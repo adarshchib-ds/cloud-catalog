@@ -52,6 +52,7 @@ function saveState() {
   // Recommendation inputs
   localStorage.setItem('recRegion', document.getElementById('rec-region').value);
   localStorage.setItem('recTenancy', document.getElementById('rec-tenancy').value);
+  localStorage.setItem('recOs', document.getElementById('rec-os').value);
   localStorage.setItem('recVcpu', document.getElementById('rec-vcpu').value);
   localStorage.setItem('recMemory', document.getElementById('rec-memory').value);
   localStorage.setItem('recCurrentPage', recCurrentPage);
@@ -104,6 +105,9 @@ async function restoreState() {
   if (localStorage.getItem('recTenancy') !== null) {
     document.getElementById('rec-tenancy').value = localStorage.getItem('recTenancy');
   }
+  if (localStorage.getItem('recOs') !== null) {
+    document.getElementById('rec-os').value = localStorage.getItem('recOs');
+  }
   if (localStorage.getItem('recVcpu') !== null) {
     const recVcpu = document.getElementById('rec-vcpu');
     recVcpu.value = localStorage.getItem('recVcpu');
@@ -133,6 +137,7 @@ async function restoreState() {
     'calc-gpu',
     'rec-region',
     'rec-tenancy',
+    'rec-os',
     'rec-vcpu',
     'rec-memory',
   ];
@@ -199,7 +204,9 @@ async function loadAll() {
     const metaData = await metaRes.json();
     if (metaData.success && metaData.data) {
       allData = []; // Not populated as we do server-side filtering
+      window.cachedMetadata = metaData.data;
       populateVcpuMemFamilies(metaData.data);
+      populateTenancies(metaData.data, document.getElementById('calc-provider')?.value);
     }
 
     await restoreState();
@@ -210,10 +217,154 @@ async function loadAll() {
   }
 }
 
+function formatOsName(os) {
+  const map = {
+    LINUX: 'Linux (Standard / Amazon Linux)',
+    WINDOWS: 'Windows Server',
+    UBUNTU: 'Ubuntu / Ubuntu Pro',
+    RED_HAT: 'Red Hat Enterprise Linux (RHEL)',
+    SUSE: 'SUSE Linux Enterprise (SLES)',
+    DEBIAN: 'Debian',
+    ALMALINUX: 'AlmaLinux',
+    ORACLE_LINUX: 'Oracle Linux',
+    FLATCAR: 'Flatcar Linux',
+    WINDOWS_SQL_SERVER: 'Windows with SQL Server',
+    LINUX_SQL_SERVER: 'Linux with SQL Server',
+    RHEL_SAP: 'RHEL for SAP HANA',
+    SLES_SAP: 'SLES for SAP HANA',
+    MACOS: 'macOS (Apple Silicon / Intel Mac)',
+  };
+  return map[os] || os.replace(/_/g, ' ');
+}
+
+function getOsProviderTag(os, byProvider) {
+  if (!byProvider) return '';
+  const inAws = Boolean(byProvider.aws?.includes(os));
+  const inAzure = Boolean(byProvider.azure?.includes(os));
+  const inGcp = Boolean(byProvider.gcp?.includes(os));
+
+  if (inAws && inAzure && inGcp) return ' [AWS, Azure, GCP]';
+  if (inAws && inAzure && !inGcp) return ' [AWS, Azure]';
+  if (inAws && !inAzure && inGcp) return ' [AWS, GCP]';
+  if (!inAws && inAzure && inGcp) return ' [Azure, GCP]';
+  if (inAws && !inAzure && !inGcp) return ' [AWS Only]';
+  if (!inAws && inAzure && !inGcp) return ' [Azure Only]';
+  if (!inAws && !inAzure && inGcp) return ' [GCP Only]';
+
+  return '';
+}
+
+function formatTenancyName(t) {
+  const map = {
+    SHARED: 'Shared (Multi-tenant)',
+    DEDICATED: 'Dedicated Instance',
+    DEDICATED_INSTANCE: 'Dedicated Instance',
+    DEDICATED_HOST: 'Dedicated Host',
+    SOLE_TENANT: 'Sole Tenant',
+  };
+  return map[t] || t.replace(/_/g, ' ');
+}
+
+function getTenancyProviderTag(t, tenanciesByProvider) {
+  if (!tenanciesByProvider) return '';
+  const inAws = Boolean(tenanciesByProvider.aws?.includes(t));
+  const inAzure = Boolean(tenanciesByProvider.azure?.includes(t));
+  const inGcp = Boolean(tenanciesByProvider.gcp?.includes(t));
+
+  if (inAws && inAzure && inGcp) return ' [AWS, Azure, GCP]';
+  if (inAws && inAzure && !inGcp) return ' [AWS, Azure]';
+  if (inAws && !inAzure && inGcp) return ' [AWS, GCP]';
+  if (!inAws && inAzure && inGcp) return ' [Azure, GCP]';
+  if (inAws && !inAzure && !inGcp) return ' [AWS Only]';
+  if (!inAws && inAzure && !inGcp) return ' [Azure Only]';
+  if (!inAws && !inAzure && inGcp) return ' [GCP Only]';
+  return '';
+}
+
+function populateTenancies(metaData, selectedProvider) {
+  if (!metaData) return;
+  const tenancies = metaData.tenancies || ['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT'];
+  const tenanciesByProvider = metaData.tenanciesByProvider;
+
+  const populateSelect = (elementId) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
+    const currentVal = el.value;
+    el.innerHTML = '<option value="">Any Tenancy</option>';
+
+    let available = tenancies;
+    if (selectedProvider && tenanciesByProvider && tenanciesByProvider[selectedProvider]) {
+      available = tenanciesByProvider[selectedProvider];
+    }
+
+    available.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      const tag = selectedProvider ? '' : getTenancyProviderTag(t, tenanciesByProvider);
+      opt.textContent = `${formatTenancyName(t)}${tag}`;
+      if (t === currentVal) opt.selected = true;
+      el.appendChild(opt);
+    });
+  };
+
+  populateSelect('calc-tenancy');
+  populateSelect('rec-tenancy');
+}
+
 function populateVcpuMemFamilies(data) {
   const families = data.families || [];
   const vcpus = data.vcpus || [];
   const memories = data.memories || [];
+  const operatingSystems = data.operatingSystems || [];
+
+  const recOs = document.getElementById('rec-os');
+  if (recOs && operatingSystems.length > 0) {
+    const currentOs = recOs.value;
+    recOs.innerHTML = '<option value="">Any OS (Default: Linux)</option>';
+
+    const multiCloudOs = [];
+    const providerSpecificOs = [];
+
+    operatingSystems.forEach(os => {
+      const inAws = data.byProvider?.aws?.includes(os);
+      const inAzure = data.byProvider?.azure?.includes(os);
+      const inGcp = data.byProvider?.gcp?.includes(os);
+
+      if (inAws && inAzure && inGcp) {
+        multiCloudOs.push(os);
+      } else {
+        providerSpecificOs.push(os);
+      }
+    });
+
+    if (multiCloudOs.length > 0) {
+      const groupMulti = document.createElement('optgroup');
+      groupMulti.label = '🌐 Multi-Cloud Supported (AWS, Azure & GCP)';
+      multiCloudOs.forEach(os => {
+        const opt = document.createElement('option');
+        opt.value = os;
+        opt.textContent = `${formatOsName(os)} [AWS, Azure, GCP]`;
+        if (os === currentOs) opt.selected = true;
+        groupMulti.appendChild(opt);
+      });
+      recOs.appendChild(groupMulti);
+    }
+
+    if (providerSpecificOs.length > 0) {
+      const groupSpecific = document.createElement('optgroup');
+      groupSpecific.label = '🟧 Provider-Specific OS Metadata';
+      providerSpecificOs.forEach(os => {
+        const opt = document.createElement('option');
+        opt.value = os;
+        const tag = getOsProviderTag(os, data.byProvider);
+        opt.textContent = `${formatOsName(os)}${tag}`;
+        if (os === currentOs) opt.selected = true;
+        groupSpecific.appendChild(opt);
+      });
+      recOs.appendChild(groupSpecific);
+    }
+  }
 
   const selFamily = document.getElementById('calc-family');
   if (selFamily) {
@@ -432,6 +583,10 @@ async function onCalcProviderChange() {
   } catch (e) {
     console.error('Failed to load regions', e);
     sel.innerHTML = '<option value="">Any Region</option>';
+  }
+
+  if (window.cachedMetadata) {
+    populateTenancies(window.cachedMetadata, p);
   }
 }
 onCalcProviderChange();
@@ -936,8 +1091,23 @@ function renderRecMatrix() {
       `;
     }
 
+    const osBadge = inst.operatingSystem
+      ? `<span style="font-size:8px; background:rgba(0,184,107,0.12); padding:1px 5px; border-radius:3px; color:var(--green); font-weight:700; text-transform:uppercase;">${esc(inst.operatingSystem)}</span>`
+      : '';
+
+    const tenancyBadge = inst.tenancy
+      ? `<span style="font-size:8px; background:rgba(124,58,237,0.12); padding:1px 5px; border-radius:3px; color:#9333ea; font-weight:700; text-transform:uppercase;">${esc(formatTenancyName(inst.tenancy))}</span>`
+      : '';
+
+    const licenseBadge = inst.licenseType === 'BYOL'
+      ? `<span style="font-size:8px; background:rgba(255,149,0,0.12); padding:1px 5px; border-radius:3px; color:var(--aws); font-weight:700; text-transform:uppercase;">BYOL (No License)</span>`
+      : `<span style="font-size:8px; background:rgba(0,120,212,0.12); padding:1px 5px; border-radius:3px; color:var(--accent); font-weight:700; text-transform:uppercase;">License Included</span>`;
+
     const metaHtml = `
       <div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+        ${osBadge}
+        ${tenancyBadge}
+        ${licenseBadge}
         <span style="font-size:8px; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; color:var(--text-3); text-transform:uppercase;">${esc(inst.category)}</span>
         <span style="font-size:8px; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; color:var(--text-3); text-transform:uppercase;">${esc(inst.architecture)}</span>
         <span style="font-size:8px; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; color:var(--text-3); text-transform:uppercase;">Gen ${esc(inst.generation)}</span>
@@ -989,7 +1159,7 @@ function renderRecMatrix() {
           <span class="td-badge td-badge-azure" style="font-size:8px;">Intent Optimized</span>
         </div>
         <div style="background:var(--bg);border:1px solid var(--border-light);padding:5px 12px;border-radius:var(--r-xs);font-size:12px;">
-          <span style="color:var(--text-3);font-size:9px;text-transform:uppercase;letter-spacing:0.5px;margin-right:6px;">AWS Family:</span>
+          <span style="color:var(--text-3);font-size:9px;text-transform:uppercase;letter-spacing:0.5px;margin-right:6px;">Baseline Family:</span>
           <span style="font-weight:700;color:var(--accent);font-family:monospace;">${esc(currentAutoSuggestedFamily)}</span>
         </div>
       </div>
@@ -1008,9 +1178,11 @@ function renderRecMatrix() {
     const az = row.azure;
     const gc = row.gcp;
 
+    const baseInst = aws || az || gc;
+
     let recommendationAlert = '';
-    if (aws.recommendation) {
-      const rec = aws.recommendation;
+    if (baseInst && baseInst.recommendation) {
+      const rec = baseInst.recommendation;
       const recHourly = formatPriceRange(
         rec.onDemandHourlyCostMin || rec.onDemandHourlyCost,
         rec.onDemandHourlyCostMax || rec.onDemandHourlyCost,
@@ -1022,13 +1194,13 @@ function renderRecMatrix() {
         ' / month',
       );
       const curHourly = formatPriceRange(
-        aws.onDemandHourlyCostMin || aws.onDemandHourlyCost,
-        aws.onDemandHourlyCostMax || aws.onDemandHourlyCost,
+        baseInst.onDemandHourlyCostMin || baseInst.onDemandHourlyCost,
+        baseInst.onDemandHourlyCostMax || baseInst.onDemandHourlyCost,
         ' / hour',
       );
       const curMonthly = formatPriceRange(
-        aws.onDemandMonthlyCostMin || aws.onDemandMonthlyCost,
-        aws.onDemandMonthlyCostMax || aws.onDemandMonthlyCost,
+        baseInst.onDemandMonthlyCostMin || baseInst.onDemandMonthlyCost,
+        baseInst.onDemandMonthlyCostMax || baseInst.onDemandMonthlyCost,
         ' / month',
       );
 
@@ -1057,7 +1229,7 @@ function renderRecMatrix() {
           <div style="display:flex; gap:8px; align-items:stretch;">
             <div style="flex:1; padding:8px 10px; background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.15); border-radius:var(--r-xs);">
               <div style="font-size:8px; text-transform:uppercase; letter-spacing:0.3px; color:var(--red); font-weight:700; margin-bottom:4px;">Current Instance</div>
-              <div style="font-family:monospace; font-weight:700; font-size:11px; color:var(--text); margin-bottom:4px;">${esc(aws.instance)}</div>
+              <div style="font-family:monospace; font-weight:700; font-size:11px; color:var(--text); margin-bottom:4px;">${esc(baseInst.instance || baseInst.instanceType)}</div>
               <div style="font-size:9px; color:var(--text-4); margin-bottom:2px;">Hourly: ${curHourly}</div>
               <div style="font-size:9px; color:var(--text-4);">Monthly: ≈ ${curMonthly}</div>
             </div>
@@ -1074,19 +1246,63 @@ function renderRecMatrix() {
       `;
     }
 
+    const getEmptyCell = (providerSlug) => {
+      const selectedOs = document.getElementById('rec-os')?.value;
+      if (selectedOs === 'UBUNTU' || selectedOs === 'RED_HAT' || selectedOs === 'SUSE' || selectedOs === 'MACOS') {
+        const osLabel = formatOsName(selectedOs);
+        const pName = providerSlug === 'azure' ? 'Azure' : providerSlug === 'aws' ? 'AWS' : 'GCP';
+        return `
+          <div style="padding:12px; background:rgba(255,149,0,0.05); border:1px dashed rgba(255,149,0,0.25); border-radius:6px;">
+            <div style="font-size:11px; font-weight:700; color:var(--aws); margin-bottom:4px;">No direct ${esc(osLabel)} SKU</div>
+            <div style="font-size:10px; color:var(--text-3); line-height:1.4;">${pName} stores base compute under generic <strong>Linux</strong> rates. Select <strong>Linux</strong> in the dropdown to compare ${pName} rates.</div>
+          </div>
+        `;
+      }
+      return `<div style="color:var(--text-4);font-size:11px;font-style:italic;">No equivalent found</div>`;
+    };
+
+    const renderCell = (inst, isAws, slug) => {
+      if (!inst) return getEmptyCell(slug);
+      return cloudCell(
+        {
+          instanceType: inst.instance || inst.instanceType || inst.recommendedInstance,
+          recommendedInstance: inst.recommendedInstance || inst.instance || inst.instanceType,
+          vcpu: inst.vcpu,
+          memoryGib: inst.memoryGib,
+          storageSummary: inst.storageSummary,
+          onDemandHourlyCost: inst.onDemandHourlyCost,
+          onDemandHourlyCostMin: inst.onDemandHourlyCostMin,
+          onDemandHourlyCostMax: inst.onDemandHourlyCostMax,
+          onDemandMonthlyCost: inst.onDemandMonthlyCost,
+          onDemandMonthlyCostMin: inst.onDemandMonthlyCostMin,
+          onDemandMonthlyCostMax: inst.onDemandMonthlyCostMax,
+          category: inst.category,
+          architecture: inst.architecture,
+          generation: inst.generation,
+          currentGeneration: inst.currentGeneration,
+          operatingSystem: inst.operatingSystem,
+          tenancy: inst.tenancy,
+          licenseType: inst.licenseType,
+        },
+        isAws,
+        inst.matchScore,
+        inst.reasons,
+      );
+    };
+
     html += `
       <div style="display:flex;border-bottom:1px solid var(--border-light);${rowBg}">
         <div style="flex:1;padding:14px 16px;min-width:0;display:flex;flex-direction:column;justify-content:space-between;">
           <div>
-            ${cloudCell({ instanceType: aws.instance, vcpu: aws.vcpu, memoryGib: aws.memoryGib, storageSummary: aws.storageSummary, onDemandHourlyCost: aws.onDemandHourlyCost, onDemandHourlyCostMin: aws.onDemandHourlyCostMin, onDemandHourlyCostMax: aws.onDemandHourlyCostMax, onDemandMonthlyCost: aws.onDemandMonthlyCost, onDemandMonthlyCostMin: aws.onDemandMonthlyCostMin, onDemandMonthlyCostMax: aws.onDemandMonthlyCostMax, category: aws.category, architecture: aws.architecture, generation: aws.generation, currentGeneration: aws.currentGeneration }, true, 100)}
-            ${recommendationAlert}
+            ${renderCell(aws, true, 'aws')}
+            ${aws ? recommendationAlert : ''}
           </div>
         </div>
         <div style="flex:1;padding:14px 16px;border-left:2px solid var(--border-light);min-width:0;">
-          ${az ? cloudCell({ instanceType: az.recommendedInstance, vcpu: az.vcpu, memoryGib: az.memoryGib, storageSummary: az.storageSummary, onDemandHourlyCost: az.onDemandHourlyCost, onDemandHourlyCostMin: az.onDemandHourlyCostMin, onDemandHourlyCostMax: az.onDemandHourlyCostMax, onDemandMonthlyCost: az.onDemandMonthlyCost, onDemandMonthlyCostMin: az.onDemandMonthlyCostMin, onDemandMonthlyCostMax: az.onDemandMonthlyCostMax, category: az.category, architecture: az.architecture, generation: az.generation, currentGeneration: az.currentGeneration }, false, az.matchScore, az.reasons) : emptyCell}
+          ${renderCell(az, false, 'azure')}
         </div>
         <div style="flex:1;padding:14px 16px;border-left:2px solid var(--border-light);min-width:0;">
-          ${gc ? cloudCell({ instanceType: gc.recommendedInstance, vcpu: gc.vcpu, memoryGib: gc.memoryGib, storageSummary: gc.storageSummary, onDemandHourlyCost: gc.onDemandHourlyCost, onDemandHourlyCostMin: gc.onDemandHourlyCostMin, onDemandHourlyCostMax: gc.onDemandHourlyCostMax, onDemandMonthlyCost: gc.onDemandMonthlyCost, onDemandMonthlyCostMin: gc.onDemandMonthlyCostMin, onDemandMonthlyCostMax: gc.onDemandMonthlyCostMax, category: gc.category, architecture: gc.architecture, generation: gc.generation, currentGeneration: gc.currentGeneration }, false, gc.matchScore, gc.reasons) : emptyCell}
+          ${renderCell(gc, false, 'gcp')}
         </div>
       </div>
     `;
@@ -1121,8 +1337,10 @@ async function getSmartRecommendations() {
   out.innerHTML =
     '<div class="loading"><div class="loading-spinner"></div><p>Resolving cross-cloud capability matrix...</p></div>';
 
-  const reqVcpu = parseInt(document.getElementById('rec-vcpu').value) || 4;
-  const reqMemoryGib = parseFloat(document.getElementById('rec-memory').value) || 16;
+  const vcpuVal = document.getElementById('rec-vcpu').value;
+  const memoryVal = document.getElementById('rec-memory').value;
+  const reqVcpu = vcpuVal ? parseInt(vcpuVal) : undefined;
+  const reqMemoryGib = memoryVal ? parseFloat(memoryVal) : undefined;
   const region = document.getElementById('rec-region').value || undefined;
   const tenancy = document.getElementById('rec-tenancy').value || undefined;
   const operatingSystem = document.getElementById('rec-os').value || undefined;

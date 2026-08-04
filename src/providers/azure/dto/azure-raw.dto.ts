@@ -22,6 +22,7 @@ export const AzureRetailPriceItemSchema = z.object({
   type: z.string(),
   isPrimaryMeterRegion: z.boolean(),
   armSkuName: z.string(),
+  reservationTerm: z.string().optional(),
 });
 
 export type AzureRetailPriceItem = z.infer<typeof AzureRetailPriceItemSchema>;

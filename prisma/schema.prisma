@@ -36,14 +36,6 @@ enum StorageType {
   NETWORK
 }
 
-enum OperatingSystem {
-  LINUX
-  WINDOWS
-  UBUNTU
-  RED_HAT
-  SUSE
-}
-
 enum LicenseType {
   INCLUDED
   BYOL
@@ -215,10 +207,10 @@ model VmInstance {
 // ==========================================
 
 model VmCapabilityMatrix {
-  id              String          @id @default(uuid()) @db.VarChar(36)
-  vmInstanceId    String          @db.VarChar(36)
-  regionId        String          @db.VarChar(36)
-  operatingSystem OperatingSystem
+  id              String       @id @default(uuid()) @db.VarChar(36)
+  vmInstanceId    String       @db.VarChar(36)
+  regionId        String       @db.VarChar(36)
+  operatingSystem String       @db.VarChar(50)
   tenancy         Tenancy
   licenseType     LicenseType?    @default(INCLUDED)
 

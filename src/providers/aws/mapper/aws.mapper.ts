@@ -1,7 +1,6 @@
 import {
   Architecture,
   ProcessorManufacturer,
-  OperatingSystem,
   Tenancy,
   LicenseType,
   PricingType,
@@ -143,11 +142,12 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
   const cpuFrequencyGhz = raw.ProcessorInfo.SustainedClockSpeedInGhz ?? null;
 
   // Extract numeric generation and currentGeneration boolean
-  const { generation, currentGeneration } = parseAwsGeneration(raw.InstanceType);
+  const { generation, currentGeneration } = parseAwsGeneration(raw.InstanceType, raw.CurrentGeneration);
 
   return {
     instanceType: raw.InstanceType,
     instanceSize: size,
+    displayName: `AWS ${raw.InstanceType}`,
     generation,
     currentGeneration,
     vcpu: raw.VCpuInfo.DefaultVCpus,
@@ -168,13 +168,20 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
       raw.NetworkInfo?.EfaSupported === true,
     storageSummary,
     storageSizeGib,
+    supportsLiveMigration: false, // Explicitly represents AWS EC2 reboot/stop-start host maintenance model
+    supportsNestedVirtualization:
+      raw.InstanceType.endsWith('.metal') ||
+      generation !== null && generation >= 5, // All Nitro hypervisor instances support hardware-assisted virtualization extensions
   };
 }
 
-export function parseAwsGeneration(instanceType: string): { generation: number | null; currentGeneration: boolean } {
+export function parseAwsGeneration(
+  instanceType: string,
+  rawCurrentGeneration?: boolean,
+): { generation: number | null; currentGeneration: boolean } {
   const family = instanceType.split('.')[0]?.toLowerCase() || '';
-  
-  // Previous generation families explicitly listed by AWS
+
+  // Previous generation families explicitly listed by AWS (fallback list)
   const legacyFamilies = ['t1', 'm1', 'c1', 'm2', 'cr1', 'cg1', 'hs1', 'cc1', 'cc2', 'g2', 'i2', 'r3', 'm3', 'c3', 't2'];
   const isLegacy = legacyFamilies.includes(family);
 
@@ -185,19 +192,29 @@ export function parseAwsGeneration(instanceType: string): { generation: number |
     generation = parseInt(match[1], 10);
   }
 
+  // Prioritize native AWS SDK CurrentGeneration boolean flag if present
+  const currentGeneration = typeof rawCurrentGeneration === 'boolean' ? rawCurrentGeneration : !isLegacy;
+
   return {
     generation,
-    currentGeneration: !isLegacy,
+    currentGeneration,
   };
 }
 
-export function mapOperatingSystem(rawOs: string): OperatingSystem {
-  const os = rawOs.toLowerCase();
-  if (os.includes('win')) return OperatingSystem.WINDOWS;
-  if (os.includes('red hat') || os.includes('rhel')) return OperatingSystem.RED_HAT;
-  if (os.includes('suse') || os.includes('sles')) return OperatingSystem.SUSE;
-  if (os.includes('ubuntu')) return OperatingSystem.UBUNTU;
-  return OperatingSystem.LINUX;
+export function mapOperatingSystem(rawOs: string): string {
+  if (!rawOs || !rawOs.trim()) return 'LINUX';
+  const os = rawOs.toLowerCase().trim();
+  if (os.includes('win') && os.includes('sql')) return 'WINDOWS_SQL_SERVER';
+  if (os.includes('win')) return 'WINDOWS';
+  if (os.includes('red hat') || os.includes('rhel')) return 'RED_HAT';
+  if (os.includes('suse') || os.includes('sles')) return 'SUSE';
+  if (os.includes('ubuntu')) return 'UBUNTU';
+  if (os.includes('debian')) return 'DEBIAN';
+  if (os.includes('almalinux') || os.includes('alma')) return 'ALMALINUX';
+  if (os.includes('oracle')) return 'ORACLE_LINUX';
+  if (os.includes('flatcar')) return 'FLATCAR';
+  if (os.includes('mac')) return 'MACOS';
+  return rawOs.trim().toUpperCase().replace(/\s+/g, '_');
 }
 
 export function mapTenancy(rawTenancy: string): Tenancy {
@@ -244,6 +261,10 @@ export function mapPricing(raw: AwsRawPricingProduct): NormalizedVmPricingDTO | 
   const rate = priceDims[priceKeys[0]].pricePerUnit.USD;
   const hourlyCost = parseFloat(rate);
 
+  if (isNaN(hourlyCost) || hourlyCost <= 0 || hourlyCost >= 999999) {
+    return null;
+  }
+
   return {
     pricingType: PricingType.ON_DEMAND,
     hourlyCost,
@@ -277,6 +298,10 @@ export function mapReservedPricing(raw: AwsRawPricingProduct): NormalizedVmPrici
 
   const rate = priceDims[priceKeys[0]].pricePerUnit.USD;
   const hourlyCost = parseFloat(rate);
+
+  if (isNaN(hourlyCost) || hourlyCost <= 0 || hourlyCost >= 999999) {
+    return null;
+  }
 
   return {
     pricingType: PricingType.RESERVED,

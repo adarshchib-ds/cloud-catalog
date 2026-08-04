@@ -1,7 +1,6 @@
 import {
   Architecture,
   ProcessorManufacturer,
-  OperatingSystem,
   Tenancy,
   LicenseType,
   PricingType,
@@ -100,9 +99,17 @@ export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
   const nestedVirt = getSkuCapability(sku, 'NestedVirtualizationSupported');
   const supportsNestedVirtualization = nestedVirt === 'True';
 
+  const rawGpuVendor = hasGpu && gpuModel ? gpuModel.split(' ')[0].toUpperCase() : null;
+  const gpuManufacturer = hasGpu
+    ? rawGpuVendor === 'RADEON' || rawGpuVendor === 'INSTINCT'
+      ? 'AMD'
+      : rawGpuVendor || 'NVIDIA'
+    : null;
+
   return {
     instanceType: armSkuName,
     instanceSize: size,
+    displayName: `Azure ${armSkuName}`,
     vcpu,
     memoryGib,
     processor: null,
@@ -112,7 +119,7 @@ export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
     gpuCount: hasGpu ? gpuCount : null,
     gpuModel,
     gpuMemoryGib,
-    gpuManufacturer: hasGpu ? 'NVIDIA' : null,
+    gpuManufacturer,
     networkPerformance:
       getSkuCapability(sku, 'AcceleratedNetworkingEnabled') === 'True' ? 'Accelerated' : 'Standard',
     networkBandwidthGbps: null,
@@ -128,13 +135,14 @@ export function mapAzureVmInstance(sku: ResourceSku): NormalizedVmInstanceDTO {
 }
 
 // Determines OS type
-export function mapOperatingSystem(productName: string): OperatingSystem {
-  const name = productName.toLowerCase();
-  if (name.includes('windows')) return OperatingSystem.WINDOWS;
-  if (name.includes('ubuntu')) return OperatingSystem.UBUNTU;
-  if (name.includes('red hat') || name.includes('rhel')) return OperatingSystem.RED_HAT;
-  if (name.includes('suse') || name.includes('sles')) return OperatingSystem.SUSE;
-  return OperatingSystem.LINUX;
+export function mapOperatingSystem(productName: string): string {
+  if (!productName || !productName.trim()) return 'LINUX';
+  const name = productName.toLowerCase().trim();
+  if (name.includes('windows')) return 'WINDOWS';
+  if (name.includes('ubuntu')) return 'UBUNTU';
+  if (name.includes('red hat') || name.includes('rhel')) return 'RED_HAT';
+  if (name.includes('suse') || name.includes('sles')) return 'SUSE';
+  return 'LINUX';
 }
 
 // Maps capability matrix
@@ -164,49 +172,50 @@ export function mapAzurePricing(item: AzureRetailPriceItem): NormalizedVmPricing
     item.meterName.toLowerCase().includes('spot') ||
     item.meterName.toLowerCase().includes('low priority');
 
+  if (isSpot) {
+    return { pricingType: PricingType.SPOT, hourlyCost: item.retailPrice };
+  }
+
+  if (item.type === 'Reservation') {
+    const term = item.reservationTerm?.toLowerCase() || '';
+    if (term.includes('3 yr') || term.includes('3 year') || term.includes('36 month')) {
+      return { pricingType: PricingType.COMMITMENT, hourlyCost: item.retailPrice };
+    }
+    return { pricingType: PricingType.RESERVED, hourlyCost: item.retailPrice };
+  }
+
   return {
-    pricingType: isSpot ? PricingType.SPOT : PricingType.ON_DEMAND,
+    pricingType: PricingType.ON_DEMAND,
     hourlyCost: item.retailPrice,
   };
 }
 
-// Resolves currentGeneration status for all Azure VM instances using Microsoft's official lifecycle lists
-export function determineCurrentGeneration(skuNames: string[]): Map<string, boolean> {
+import { AzureLifecycleLookup } from '../services/azure-lifecycle.service';
+
+// Resolves currentGeneration status using official Microsoft Azure Lifecycle Resolver
+export function determineCurrentGeneration(
+  skuNames: string[],
+  lifecycleLookup?: AzureLifecycleLookup,
+): Map<string, boolean> {
   const generationMap = new Map<string, boolean>();
 
-  const isLegacySku = (skuName: string): boolean => {
-    const clean = skuName.replace('Standard_', '').replace('Basic_', '').toLowerCase();
-
-    // Basic & Standard A-series (A0-A7, Av2, Amv2)
-    if (/^a[0-9]/i.test(clean) || (clean.includes('v2') && clean.startsWith('a'))) return true;
-
-    // Series with version suffixes _v1, _v2, _v3, _v4 listed in Microsoft previous-gen / retired lists
-    if (clean.includes('_v1') || clean.includes('_v2') || clean.includes('_v3') || clean.includes('_v4')) {
-      if (
-        clean.startsWith('d') || clean.startsWith('ds') || clean.startsWith('e') ||
-        clean.startsWith('es') || clean.startsWith('f') || clean.startsWith('fs') ||
-        clean.startsWith('l') || clean.startsWith('ls') || clean.startsWith('m192') ||
-        clean.startsWith('nv') || clean.startsWith('nc')
-      ) return true;
-    }
-
-    // Unversioned legacy series (D1-D14, DS1-DS14, F1-F16, G1-G5, GS1-GS5, Ls)
-    if (
-      /^d[0-9]/i.test(clean) || /^ds[0-9]/i.test(clean) || /^f[0-9]/i.test(clean) ||
-      /^fs[0-9]/i.test(clean) || /^g[0-9]/i.test(clean) || /^gs[0-9]/i.test(clean) ||
-      /^ls[0-9]/i.test(clean)
-    ) {
-      if (!clean.includes('_v5') && !clean.includes('_v6') && !clean.includes('_v4')) return true;
-    }
-
-    // B-series (V1) is previous-gen per Microsoft previous-gen-sizes-list.md
-    if (clean.startsWith('b') && !clean.includes('_v2')) return true;
-
-    return false;
-  };
-
   for (const sku of skuNames) {
-    generationMap.set(sku, !isLegacySku(sku));
+    if (lifecycleLookup) {
+      generationMap.set(sku, lifecycleLookup.isCurrentGeneration(sku));
+    } else {
+      const norm = sku.trim();
+      const clean = norm.replace(/^(Standard_|Basic_)/i, '');
+      const isLegacy =
+        /^a[0-9]/i.test(clean) ||
+        clean.startsWith('a') ||
+        /^d[0-9]$/i.test(clean) ||
+        /^ds[0-9]$/i.test(clean) ||
+        /^f[0-9]$/i.test(clean) ||
+        /^fs[0-9]$/i.test(clean) ||
+        /^g[0-9]$/i.test(clean) ||
+        /^gs[0-9]$/i.test(clean);
+      generationMap.set(sku, !isLegacy);
+    }
   }
 
   return generationMap;

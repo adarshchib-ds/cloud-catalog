@@ -60,6 +60,7 @@ export const AwsRawInstanceTypeSchema = z.object({
         .optional(),
     })
     .optional(),
+  CurrentGeneration: z.boolean().optional(),
 });
 export type AwsRawInstanceType = z.infer<typeof AwsRawInstanceTypeSchema>;
 

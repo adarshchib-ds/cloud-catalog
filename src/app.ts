@@ -77,6 +77,17 @@ export function createApp(): Application {
   app.use(`${apiPrefix}/instances`, instanceRoutes);
   app.use(`${apiPrefix}/health`, healthRoutes);
 
+  // Task 2: Lightweight Health Check Probe Endpoint (Kubernetes / Load Balancer)
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      service: 'cloud-catalog-api',
+      version: '1.0.0',
+    });
+  });
+
   app.get('/', (_req, res) => {
     res.json({
       success: true,

@@ -103,6 +103,7 @@ export async function fetchAwsInstanceTypes(): Promise<AwsRawInstanceType[]> {
                       })) ?? undefined,
                   }
                 : undefined,
+              CurrentGeneration: inst.CurrentGeneration ?? undefined,
             });
           }
         }
@@ -137,9 +138,24 @@ export async function fetchAwsPrices(awsRegionCode: string): Promise<AwsRawPrici
         MaxResults: 100,
       };
       const pricingCommand = new GetProductsCommand(commandArg);
-      const pricingResponse: any = await pricingClient.send(pricingCommand);
 
-      if (pricingResponse.PriceList) {
+      // Execute API call with exponential backoff retry for throttling safety
+      let pricingResponse: any = null;
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          pricingResponse = await pricingClient.send(pricingCommand);
+          break;
+        } catch (err: any) {
+          retries--;
+          if (retries === 0) throw err;
+          const jitter = Math.floor(Math.random() * 300);
+          const delayMs = (4 - retries) * 1000 + jitter;
+          await new Promise(res => setTimeout(res, delayMs));
+        }
+      }
+
+      if (pricingResponse?.PriceList) {
         for (const rawItem of pricingResponse.PriceList) {
           try {
             // The API returns a stringified JSON document
@@ -153,7 +169,7 @@ export async function fetchAwsPrices(awsRegionCode: string): Promise<AwsRawPrici
           }
         }
       }
-      nextToken = pricingResponse.NextToken;
+      nextToken = pricingResponse?.NextToken;
     } while (nextToken);
 
     return pricingProducts;
