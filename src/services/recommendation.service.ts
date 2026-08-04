@@ -14,49 +14,83 @@ export async function getSmartRecommendations(
 ): Promise<RecommendationResponseDto> {
   const { reqVcpu, reqMemoryGib, region, tenancy, operatingSystem, pricingModel } = criteria;
 
-  // ── 1. Resolve AWS provider ID ────────────────────────────────────────────
-  const awsProvider = await db.provider.findFirst({ where: { slug: 'amazon-web-services' } });
-  if (!awsProvider) {
-    throw new Error('AWS provider not found.');
+  // ── 1. Dynamic Baseline Provider Selection ────────────────────────────────
+  // Determine eligible providers that satisfy the capability matrix filters
+  const matrixFilter: any = { isActive: true, isRegionAvailable: true };
+  
+  const validTenancyValues = ['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT'];
+  if (tenancy) {
+    if (!validTenancyValues.includes(tenancy)) {
+      // Invalid enum string passed (e.g. unsupported filter) -> return empty recommendation cleanly
+      return {
+        autoSuggestedFamily: 'General Purpose',
+        matrixRows: [],
+      };
+    }
+    matrixFilter.tenancy = tenancy;
+  }
+  if (operatingSystem) matrixFilter.operatingSystem = operatingSystem;
+  if (region) {
+    matrixFilter.region = { code: { contains: region, mode: 'insensitive' }, isActive: true };
   }
 
-  // ── 2. Build where clause for AWS instances ───────────────────────────────
-  const awsWhere: any = {
-    service: { providerId: awsProvider.id, isActive: true },
-    vcpu: reqVcpu,
-    memoryGib: reqMemoryGib,
+  // Find all providers with matching capability rows
+  const matchingProviders = await db.provider.findMany({
+    where: {
+      services: {
+        some: {
+          isActive: true,
+          vmInstances: {
+            some: {
+              ...(reqVcpu ? { vcpu: reqVcpu } : {}),
+              ...(reqMemoryGib ? { memoryGib: reqMemoryGib } : {}),
+              vmCapabilityMatrix: { some: matrixFilter },
+            },
+          },
+        },
+      },
+    },
+    select: { id: true, slug: true },
+  });
+
+  // Default priority order: AWS -> Azure -> GCP (if multiple match), or whichever provider satisfies criteria
+  const baselineProvider =
+    matchingProviders.find(p => p.slug === 'amazon-web-services' || p.id === 'aws') ||
+    matchingProviders.find(p => p.slug.includes('azure') || p.id === 'azure') ||
+    matchingProviders.find(p => p.slug.includes('gcp') || p.id === 'gcp') ||
+    matchingProviders[0];
+
+  if (!baselineProvider) {
+    return {
+      autoSuggestedFamily: 'General Purpose',
+      matrixRows: [],
+    };
+  }
+
+  // ── 2. Build baseline candidate query ──────────────────────────────────────
+  const baselineWhere: any = {
+    service: { providerId: baselineProvider.id, isActive: true },
+    ...(reqVcpu ? { vcpu: reqVcpu } : {}),
+    ...(reqMemoryGib ? { memoryGib: reqMemoryGib } : {}),
   };
 
   if (region || tenancy || operatingSystem) {
-    const matrixWhere: any = { isActive: true, isRegionAvailable: true };
-    if (region) {
-      matrixWhere.region = { code: { contains: region, mode: 'insensitive' }, isActive: true };
-    }
-    if (tenancy) {
-      matrixWhere.tenancy = tenancy;
-    }
-    if (operatingSystem) {
-      matrixWhere.operatingSystem = operatingSystem;
-    }
-    awsWhere.vmCapabilityMatrix = { some: matrixWhere };
+    baselineWhere.vmCapabilityMatrix = { some: matrixFilter };
   }
 
   const targetType = pricingModel || 'ON_DEMAND';
 
-  // Helper to resolve pricing from new relational structure in memory
+  // Helper to resolve pricing from relational structure in memory
   const getHourlyCost = (inst: any): number => {
     const matrices = inst.vmCapabilityMatrix || [];
 
-    // Filter matrices that actually have targetType pricing first
     const matricesWithTargetType = matrices.filter((m: any) =>
       m.pricings?.some((p: any) => p.pricingType === targetType && Number(p.hourlyCost) > 0),
     );
 
-    // If there are none, fallback to ON_DEMAND pricing for the same matrix
     const activeMatrices = matricesWithTargetType.length > 0 ? matricesWithTargetType : matrices;
     const resolvedType = matricesWithTargetType.length > 0 ? targetType : 'ON_DEMAND';
 
-    // Helper to map AWS region code to Azure region code equivalents
     const getAzureRegionCode = (awsCode: string): string => {
       const map: Record<string, string> = {
         'eu-west-1': 'northeurope',
@@ -76,7 +110,6 @@ export async function getSmartRecommendations(
       return map[awsCode.toLowerCase()] || awsCode;
     };
 
-    // Strict matching (Region + Tenancy + OS)
     let matrix = activeMatrices.find((m: any) => {
       if (
         region &&
@@ -89,7 +122,6 @@ export async function getSmartRecommendations(
       return true;
     });
 
-    // If no strict matrix match exists for the requested filters, fallback only if filters were omitted
     if (!matrix && !tenancy && !operatingSystem) {
       matrix = activeMatrices.find((m: any) => {
         if (
@@ -110,13 +142,13 @@ export async function getSmartRecommendations(
     return pricing ? Number(pricing.hourlyCost) : 0;
   };
 
-  // Helper to resolve min/max hourly cost range across ALL capability matrix entries
   const getHourlyCostRange = (inst: any): { min: number; max: number } => {
     const baseCost = getHourlyCost(inst);
     return calculatePriceRange(baseCost);
   };
 
   const capabilityInclude = {
+    service: { include: { provider: true } },
     instanceFamily: true,
     vmCapabilityMatrix: {
       where: {
@@ -127,24 +159,26 @@ export async function getSmartRecommendations(
       },
       include: {
         region: true,
-        pricings: true, // Fetch all pricing types for robust fallback
+        pricings: true,
       },
     },
   };
 
-  // ── 3. Fetch matching AWS instances ───────────────────────────────────────
-  const awsInstances = (await db.vmInstance.findMany({
-    where: awsWhere,
-    take: 8,
+  const page = criteria.page || 1;
+  const pageSize = criteria.pageSize || 20;
+
+  // ── 3. Fetch baseline provider candidates ──────────────────────────────────
+  const baselineInstances = (await db.vmInstance.findMany({
+    where: baselineWhere,
+    skip: (page - 1) * pageSize,
+    take: pageSize,
     include: capabilityInclude as any,
   })) as any[];
 
-  // Sort by price in memory
-  awsInstances.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
+  baselineInstances.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
 
-  // Pick top family for response label
   const familyFreq = new Map<string, { name: string; count: number }>();
-  for (const inst of awsInstances) {
+  for (const inst of baselineInstances) {
     const fid = inst.instanceFamilyId;
     if (!familyFreq.has(fid)) familyFreq.set(fid, { name: inst.instanceFamily.name, count: 0 });
     familyFreq.get(fid)!.count++;
@@ -152,11 +186,10 @@ export async function getSmartRecommendations(
   const topFamily = [...familyFreq.values()].sort((a, b) => b.count - a.count)[0];
   const suggestedFamilyName = topFamily?.name ?? 'General Purpose';
 
-  // Helper to find latest generation equivalent for an older generation instance
   const findLatestGenerationEquivalent = async (olderInst: any) => {
     const candidates = await db.vmInstance.findMany({
       where: {
-        service: { providerId: awsProvider.id, isActive: true },
+        service: { providerId: baselineProvider.id, isActive: true },
         vcpu: olderInst.vcpu,
         memoryGib: olderInst.memoryGib,
         hasGpu: olderInst.hasGpu,
@@ -168,19 +201,15 @@ export async function getSmartRecommendations(
     return candidates[0] || null;
   };
 
-  // ── 4. Get other providers ────────────────────────────────────────────────
+  // ── 4. Resolve remaining comparison providers ──────────────────────────────
   const otherProviders = await db.provider.findMany({
     where: {
-      OR: [
-        { id: { in: ['azure', 'gcp'] } },
-        { slug: { in: ['microsoft-azure', 'gcp', 'google-cloud-platform'] } },
-      ],
+      id: { not: baselineProvider.id },
     },
   });
   const otherProviderIds = otherProviders.map(p => p.id);
 
-  // ── 5. Fetch Azure + GCP candidates (filtered by matching specs) ──────────
-  // Helper to map AWS region code to Azure region code equivalents
+  // ── 5. Fetch cross-cloud candidates for comparison ─────────────────────────
   const getAzureRegionCode = (awsCode: string): string => {
     const map: Record<string, string> = {
       'eu-west-1': 'northeurope',
@@ -203,8 +232,8 @@ export async function getSmartRecommendations(
   const crossCloudCandidates = (await db.vmInstance.findMany({
     where: {
       service: { providerId: { in: otherProviderIds }, isActive: true },
-      vcpu: reqVcpu,
-      memoryGib: reqMemoryGib,
+      ...(reqVcpu ? { vcpu: reqVcpu } : {}),
+      ...(reqMemoryGib ? { memoryGib: reqMemoryGib } : {}),
       ...(tenancy || operatingSystem || region
         ? {
             vmCapabilityMatrix: {
@@ -237,16 +266,6 @@ export async function getSmartRecommendations(
           isRegionAvailable: true,
           ...(tenancy ? { tenancy } : {}),
           ...(operatingSystem ? { operatingSystem } : {}),
-          ...(region
-            ? {
-                region: {
-                  OR: [
-                    { code: { contains: region, mode: 'insensitive' } },
-                    { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
-                  ],
-                },
-              }
-            : {}),
         },
         include: {
           region: true,
@@ -256,44 +275,58 @@ export async function getSmartRecommendations(
     },
   })) as any[];
 
-  // Helper to find best equivalent for azure / gcp
-  const findBestEquivalent = (inst: any, providerSlug: string, awsMeta: any) => {
-    const candidates = crossCloudCandidates.filter(c => {
-      const pId = c.service.provider.id;
-      const pSlug = c.service.provider.slug;
-      const isMatchProvider =
-        providerSlug === 'azure'
-          ? pId === 'azure' || pSlug === 'microsoft-azure'
-          : pId === 'gcp' || pSlug === 'google-cloud-platform' || pSlug === 'gcp';
-
-      return isMatchProvider && c.vcpu === inst.vcpu && c.memoryGib === inst.memoryGib;
+  // Helper function to find best cross-cloud equivalent
+  const findBestEquivalent = (candInst: any, targetProviderSlug: string) => {
+    const baseMeta = parseInstanceMeta(candInst);
+    const candidates = crossCloudCandidates.filter((item: any) => {
+      const slug = item.service?.provider?.slug?.toLowerCase() || '';
+      const pid = item.service?.providerId?.toLowerCase() || '';
+      return (
+        slug.includes(targetProviderSlug) ||
+        pid.includes(targetProviderSlug) ||
+        (targetProviderSlug === 'gcp' && (slug.includes('google') || pid.includes('gcp'))) ||
+        (targetProviderSlug === 'azure' && (slug.includes('microsoft') || pid.includes('azure')))
+      );
     });
-    if (candidates.length === 0) return null;
 
-    const scored = candidates
-      .map(c => {
-        const candMeta = parseInstanceMeta(c);
-        // Map costs to pass to score pricing logic
-        const awsPrice = getHourlyCost(inst);
-        const candPrice = getHourlyCost(c);
-        if (candPrice <= 0) return null;
+    if (!candidates.length) return null;
 
-        const { score, reasons } = calculateScore(
-          awsMeta,
-          candMeta,
-          { ...inst, hourlyCost: awsPrice },
-          { ...c, hourlyCost: candPrice },
-        );
-        return { c, score, reasons, candMeta, candPrice };
-      })
-      .filter(Boolean) as any[];
+    const scored = candidates.map((c: any) => {
+      const candPrice = getHourlyCost(c);
+      const candMeta = parseInstanceMeta(c);
+      const basePrice = getHourlyCost(candInst);
+
+      const { score } = calculateScore(
+        baseMeta,
+        candMeta,
+        { ...candInst, hourlyCost: basePrice },
+        { ...c, hourlyCost: candPrice },
+      );
+      const reasons: string[] = [];
+
+      if (c.vcpu === candInst.vcpu && c.memoryGib === candInst.memoryGib) {
+        reasons.push('Identical vCPU and RAM configuration');
+      } else {
+        reasons.push('Proportional compute capacity match');
+      }
+
+      if (candInst.hasGpu && c.hasGpu) {
+        reasons.push('GPU capability match');
+      }
+
+      if (c.instanceFamily?.series === candInst.instanceFamily?.series) {
+        reasons.push('Matching architectural performance tier');
+      }
+
+      return { c, score, candPrice, reasons, candMeta };
+    });
 
     scored.sort((a, b) => b.score - a.score || a.candPrice - b.candPrice);
 
     const best = scored[0];
     if (!best) return null;
 
-    const onDemand = getHourlyCost(best.c);
+    const onDemand = Number(getHourlyCost(best.c));
     const onDemandRange = getHourlyCostRange(best.c);
     return {
       equivalentFamily: best.c.instanceFamily.name,
@@ -301,16 +334,19 @@ export async function getSmartRecommendations(
       matchScore: best.score,
       onDemandHourlyCost: onDemand.toFixed(4),
       onDemandMonthlyCost: (onDemand * MONTHLY_HOURS).toFixed(2),
-      onDemandHourlyCostMin: onDemandRange.min.toFixed(4),
-      onDemandHourlyCostMax: onDemandRange.max.toFixed(4),
-      onDemandMonthlyCostMin: (onDemandRange.min * MONTHLY_HOURS).toFixed(2),
-      onDemandMonthlyCostMax: (onDemandRange.max * MONTHLY_HOURS).toFixed(2),
+      onDemandHourlyCostMin: Number(onDemandRange.min).toFixed(4),
+      onDemandHourlyCostMax: Number(onDemandRange.max).toFixed(4),
+      onDemandMonthlyCostMin: (Number(onDemandRange.min) * MONTHLY_HOURS).toFixed(2),
+      onDemandMonthlyCostMax: (Number(onDemandRange.max) * MONTHLY_HOURS).toFixed(2),
       vcpu: best.c.vcpu,
       memoryGib: best.c.memoryGib,
       storageSummary: best.c.storageSummary || 'SSD Only',
       category: best.candMeta.category,
       architecture: best.candMeta.architecture,
       generation: String(best.candMeta.generation),
+      operatingSystem: (best.c.vmCapabilityMatrix?.[0]?.operatingSystem || 'LINUX').toUpperCase(),
+      tenancy: best.c.vmCapabilityMatrix?.[0]?.tenancy,
+      licenseType: best.c.vmCapabilityMatrix?.[0]?.licenseType || 'INCLUDED',
       reasons: best.reasons,
       currentGeneration: best.c.currentGeneration,
     };
@@ -318,7 +354,7 @@ export async function getSmartRecommendations(
 
   // ── 6. Build matrix rows using the Mapper layer ─────────────────────────────
   return mapToRecommendationResponseDto(
-    awsInstances,
+    baselineInstances,
     suggestedFamilyName,
     pricingModel,
     getHourlyCost,

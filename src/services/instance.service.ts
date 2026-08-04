@@ -336,7 +336,7 @@ function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmIn
     where.hasGpu = filters.hasGpu;
   }
 
-  if (filters.region || filters.tenancy) {
+  if (filters.region || filters.tenancy || filters.operatingSystem) {
     const matrixWhere: Prisma.VmCapabilityMatrixWhereInput = {
       isActive: true,
       isRegionAvailable: true,
@@ -348,6 +348,10 @@ function buildFamilyWhereClause(filters: FamilyRecommendationQuery): Prisma.VmIn
 
     if (filters.tenancy) {
       matrixWhere.tenancy = filters.tenancy as Prisma.EnumTenancyFilter['equals'];
+    }
+
+    if (filters.operatingSystem) {
+      matrixWhere.operatingSystem = filters.operatingSystem;
     }
 
     where.vmCapabilityMatrix = { some: matrixWhere };
@@ -468,14 +472,94 @@ export async function getRegions(providerId?: string) {
 }
 
 export async function getInstancesMetadata() {
-  const [vcpus, memories, families] = await Promise.all([
+  const [vcpus, memories, families, matrices] = await Promise.all([
     db.vmInstance.findMany({ select: { vcpu: true }, distinct: ['vcpu'] }),
     db.vmInstance.findMany({ select: { memoryGib: true }, distinct: ['memoryGib'] }),
     db.instanceFamily.findMany({ select: { name: true }, distinct: ['name'] }),
+    db.vmCapabilityMatrix.findMany({
+      select: {
+        operatingSystem: true,
+        tenancy: true,
+        vmInstance: {
+          select: {
+            service: {
+              select: {
+                provider: {
+                  select: { slug: true, id: true },
+                },
+              },
+            },
+          },
+        },
+      },
+      distinct: ['operatingSystem', 'tenancy', 'vmInstanceId'],
+    }),
   ]);
+
+  const allOsSet = new Set<string>();
+  const allTenancySet = new Set<string>();
+  const byProvider: Record<string, Set<string>> = {
+    aws: new Set(),
+    azure: new Set(),
+    gcp: new Set(),
+  };
+  const tenanciesByProvider: Record<string, Set<string>> = {
+    aws: new Set(),
+    azure: new Set(),
+    gcp: new Set(),
+  };
+
+  const isInvalidOs = (os: string) => {
+    const clean = os.toUpperCase().trim();
+    return clean === 'NA' || clean === 'N/A' || clean === 'NONE' || clean === 'UNKNOWN';
+  };
+
+  for (const m of matrices) {
+    const slug = m.vmInstance?.service?.provider?.slug?.toLowerCase() || m.vmInstance?.service?.provider?.id?.toLowerCase() || '';
+
+    if (m.operatingSystem && !isInvalidOs(m.operatingSystem)) {
+      allOsSet.add(m.operatingSystem);
+      if (slug.includes('aws') || slug.includes('amazon')) {
+        byProvider.aws.add(m.operatingSystem);
+      } else if (slug.includes('azure') || slug.includes('microsoft')) {
+        byProvider.azure.add(m.operatingSystem);
+      } else if (slug.includes('gcp') || slug.includes('google')) {
+        byProvider.gcp.add(m.operatingSystem);
+      }
+    }
+
+    if (m.tenancy) {
+      allTenancySet.add(m.tenancy);
+      if (slug.includes('aws') || slug.includes('amazon')) {
+        tenanciesByProvider.aws.add(m.tenancy);
+      } else if (slug.includes('azure') || slug.includes('microsoft')) {
+        tenanciesByProvider.azure.add(m.tenancy);
+      } else if (slug.includes('gcp') || slug.includes('google')) {
+        tenanciesByProvider.gcp.add(m.tenancy);
+      }
+    }
+  }
+
+  const providers = {
+    aws: Array.from(byProvider.aws).sort(),
+    azure: Array.from(byProvider.azure).sort(),
+    gcp: Array.from(byProvider.gcp).sort(),
+  };
+
+  const providerTenancies = {
+    aws: Array.from(tenanciesByProvider.aws).sort(),
+    azure: Array.from(tenanciesByProvider.azure).sort(),
+    gcp: Array.from(tenanciesByProvider.gcp).sort(),
+  };
+
   return {
     vcpus: vcpus.map(v => v.vcpu).sort((a, b) => a - b),
     memories: memories.map(m => m.memoryGib).sort((a, b) => a - b),
     families: families.map(f => f.name).sort(),
+    operatingSystems: Array.from(allOsSet).sort(),
+    tenancies: Array.from(allTenancySet).sort(),
+    providers,
+    byProvider: providers,
+    tenanciesByProvider: providerTenancies,
   };
 }

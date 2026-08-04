@@ -4,6 +4,18 @@ const tenancySchema = z
   .preprocess(val => {
     if (typeof val === 'string') {
       const normalized = val.toUpperCase().trim();
+      if (normalized.includes('SOLE TENANT') || normalized.includes('SOLE_TENANT')) {
+        return 'SOLE_TENANT';
+      }
+      if (normalized.includes('DEDICATED HOST') || normalized.includes('DEDICATED_HOST')) {
+        return 'DEDICATED_HOST';
+      }
+      if (normalized.includes('DEDICATED INSTANCE') || normalized.includes('DEDICATED_INSTANCE')) {
+        return 'DEDICATED_INSTANCE';
+      }
+      if (normalized.includes('SHARED')) {
+        return 'SHARED';
+      }
       if (normalized === 'ANY' || normalized === 'ALL' || normalized === '') return undefined;
       return normalized;
     }
@@ -54,6 +66,7 @@ const familyRecommendationSchema = z.object({
   provider: z.enum(['aws', 'azure', 'gcp']).optional(),
   region: z.string().min(1).max(50).optional(),
   tenancy: tenancySchema,
+  operatingSystem: z.string().trim().transform(val => val.toUpperCase()).optional(),
   vcpu: z.coerce.number().int().min(1).optional(),
   memory: z.coerce.number().min(0).optional(),
   hasGpu: z
@@ -78,12 +91,14 @@ const getRegionsQuerySchema = z.object({
 });
 
 const smartRecommendationSchema = z.object({
-  reqVcpu: z.coerce.number().int().min(1),
-  reqMemoryGib: z.coerce.number().min(0),
+  reqVcpu: z.coerce.number().int().min(1).optional(),
+  reqMemoryGib: z.coerce.number().min(0).optional(),
   region: z.string().min(1).max(100).optional(),
   tenancy: tenancySchema,
-  operatingSystem: z.enum(['LINUX', 'WINDOWS', 'UBUNTU', 'RED_HAT', 'SUSE']).optional(),
+  operatingSystem: z.string().trim().transform(val => val.toUpperCase()).optional(),
   pricingModel: z.enum(['ON_DEMAND', 'SPOT', 'RESERVED', 'COMMITMENT']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export type SearchInstancesQuery = z.infer<typeof searchInstancesQuerySchema>;

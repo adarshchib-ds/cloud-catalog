@@ -50,14 +50,22 @@ export function parseInstanceMeta(inst: any) {
     architecture = 'ARM64';
   }
 
-  let generation = 5;
-  const matches = inst.instanceType.match(/[0-9]+/);
-  if (matches) {
-    generation = parseInt(matches[0]);
-  } else {
-    const famMatches = inst.instanceFamily.name.match(/[0-9]+/);
-    if (famMatches) {
-      generation = parseInt(famMatches[0]);
+  let generation = typeof inst.generation === 'number' && inst.generation > 0 ? inst.generation : 5;
+  if (!inst.generation) {
+    // Fallback: Check for version suffix like _v6, _v5, -v3 (e.g. Standard_D4as_v6 -> 6)
+    const vMatch = inst.instanceType.match(/_?v([0-9]+)/i);
+    if (vMatch) {
+      generation = parseInt(vMatch[1], 10);
+    } else {
+      const matches = inst.instanceType.match(/[0-9]+/);
+      if (matches) {
+        generation = parseInt(matches[0], 10);
+      } else {
+        const famMatches = inst.instanceFamily.name.match(/[0-9]+/);
+        if (famMatches) {
+          generation = parseInt(famMatches[0], 10);
+        }
+      }
     }
   }
 

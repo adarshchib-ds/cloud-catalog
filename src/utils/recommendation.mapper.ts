@@ -11,26 +11,37 @@ export interface RecommendationResponseDto {
  * Maps matching AWS, Azure, and GCP VM instances to the clean smart recommendation matrix structure.
  */
 export async function mapToRecommendationResponseDto(
-  awsInstances: any[],
+  baselineInstances: any[],
   suggestedFamilyName: string,
   pricingModel: string | undefined,
   getHourlyCost: (inst: any) => number,
   getHourlyCostRange: (inst: any) => { min: number; max: number },
-  findBestEquivalent: (inst: any, providerSlug: string, meta: any) => any,
+  findBestEquivalent: (inst: any, providerSlug: string) => any,
   findLatestGenerationEquivalent: (inst: any) => Promise<any>,
 ): Promise<RecommendationResponseDto> {
   const matrixRows = await Promise.all(
-    awsInstances.map(async inst => {
-      const awsMeta = parseInstanceMeta(inst);
-      const azureMatch = findBestEquivalent(inst, 'azure', awsMeta);
-      const gcpMatch = findBestEquivalent(inst, 'gcp', awsMeta);
+    baselineInstances.map(async inst => {
+      const baseMeta = parseInstanceMeta(inst);
+      const providerSlug = inst.service?.provider?.slug?.toLowerCase() || inst.service?.providerId?.toLowerCase() || '';
+
+      const isBaselineAws = providerSlug.includes('amazon') || providerSlug.includes('aws');
+      const isBaselineAzure = providerSlug.includes('azure') || providerSlug.includes('microsoft');
+      const isBaselineGcp = providerSlug.includes('gcp') || providerSlug.includes('google');
+
+      const awsMatch = isBaselineAws ? null : findBestEquivalent(inst, 'aws');
+      const azureMatch = isBaselineAzure ? null : findBestEquivalent(inst, 'azure');
+      const gcpMatch = isBaselineGcp ? null : findBestEquivalent(inst, 'gcp');
 
       const allReasons = [
-        ...new Set([...(azureMatch?.reasons || []), ...(gcpMatch?.reasons || [])]),
+        ...new Set([
+          ...(awsMatch?.reasons || []),
+          ...(azureMatch?.reasons || []),
+          ...(gcpMatch?.reasons || []),
+        ]),
       ];
 
-      const awsCost = getHourlyCost(inst);
-      const awsCostRange = getHourlyCostRange(inst);
+      const baseCost = getHourlyCost(inst);
+      const baseCostRange = getHourlyCostRange(inst);
       const isOnDemand = !pricingModel || pricingModel === 'ON_DEMAND';
 
       // Generation Upgrade recommendation logic
@@ -41,9 +52,9 @@ export async function mapToRecommendationResponseDto(
           const upgradeCost = getHourlyCost(upgradeCandidate);
           const upgradeRange = getHourlyCostRange(upgradeCandidate);
           const monthlySavingsMin =
-            awsCostRange.min * MONTHLY_HOURS - upgradeRange.min * MONTHLY_HOURS;
+            baseCostRange.min * MONTHLY_HOURS - upgradeRange.min * MONTHLY_HOURS;
           const monthlySavingsMax =
-            awsCostRange.max * MONTHLY_HOURS - upgradeRange.max * MONTHLY_HOURS;
+            baseCostRange.max * MONTHLY_HOURS - upgradeRange.max * MONTHLY_HOURS;
           recommendation = {
             recommendedInstance: upgradeCandidate.instanceType,
             generation: 'Current Generation',
@@ -61,29 +72,34 @@ export async function mapToRecommendationResponseDto(
         }
       }
 
+      const baseObj = {
+        family: inst.instanceFamily.name,
+        instance: inst.instanceType,
+        category: baseMeta.category,
+        architecture: baseMeta.architecture,
+        generation: String(baseMeta.generation),
+        operatingSystem: (inst.vmCapabilityMatrix?.[0]?.operatingSystem || 'LINUX').toUpperCase(),
+        tenancy: inst.vmCapabilityMatrix?.[0]?.tenancy,
+        licenseType: inst.vmCapabilityMatrix?.[0]?.licenseType || 'INCLUDED',
+        vcpu: inst.vcpu,
+        memoryGib: inst.memoryGib,
+        storageSummary: inst.storageSummary || 'Network Storage Only',
+        onDemandHourlyCost: baseCost.toFixed(4),
+        onDemandMonthlyCost: (baseCost * MONTHLY_HOURS).toFixed(2),
+        onDemandHourlyCostMin: baseCostRange.min.toFixed(4),
+        onDemandHourlyCostMax: baseCostRange.max.toFixed(4),
+        onDemandMonthlyCostMin: (baseCostRange.min * MONTHLY_HOURS).toFixed(2),
+        onDemandMonthlyCostMax: (baseCostRange.max * MONTHLY_HOURS).toFixed(2),
+        potentialHourlyCost: isOnDemand ? (baseCost * 0.7).toFixed(4) : baseCost.toFixed(4),
+        savingsPercent: isOnDemand ? 30 : 0,
+        currentGeneration: inst.currentGeneration,
+        recommendation,
+      };
+
       return {
-        aws: {
-          family: inst.instanceFamily.name,
-          instance: inst.instanceType,
-          category: awsMeta.category,
-          architecture: awsMeta.architecture,
-          generation: String(awsMeta.generation),
-          vcpu: inst.vcpu,
-          memoryGib: inst.memoryGib,
-          storageSummary: inst.storageSummary || 'EBS Only',
-          onDemandHourlyCost: awsCost.toFixed(4),
-          onDemandMonthlyCost: (awsCost * MONTHLY_HOURS).toFixed(2),
-          onDemandHourlyCostMin: awsCostRange.min.toFixed(4),
-          onDemandHourlyCostMax: awsCostRange.max.toFixed(4),
-          onDemandMonthlyCostMin: (awsCostRange.min * MONTHLY_HOURS).toFixed(2),
-          onDemandMonthlyCostMax: (awsCostRange.max * MONTHLY_HOURS).toFixed(2),
-          potentialHourlyCost: isOnDemand ? (awsCost * 0.7).toFixed(4) : awsCost.toFixed(4),
-          savingsPercent: isOnDemand ? 30 : 0,
-          currentGeneration: inst.currentGeneration,
-          recommendation,
-        },
-        azure: azureMatch,
-        gcp: gcpMatch,
+        aws: isBaselineAws ? baseObj : awsMatch,
+        azure: isBaselineAzure ? baseObj : azureMatch,
+        gcp: isBaselineGcp ? baseObj : gcpMatch,
         reason: allReasons,
       };
     }),
