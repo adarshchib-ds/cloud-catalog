@@ -286,7 +286,7 @@ function populateTenancies(metaData, selectedProvider) {
   const tenancies = metaData.tenancies || ['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT'];
   const tenanciesByProvider = metaData.tenanciesByProvider;
 
-  const populateSelect = (elementId) => {
+  const populateSelect = (elementId, providerForSelect) => {
     const el = document.getElementById(elementId);
     if (!el) return;
 
@@ -294,22 +294,22 @@ function populateTenancies(metaData, selectedProvider) {
     el.innerHTML = '<option value="">Any Tenancy</option>';
 
     let available = tenancies;
-    if (selectedProvider && tenanciesByProvider && tenanciesByProvider[selectedProvider]) {
-      available = tenanciesByProvider[selectedProvider];
+    if (providerForSelect && tenanciesByProvider && tenanciesByProvider[providerForSelect]) {
+      available = tenanciesByProvider[providerForSelect];
     }
 
     available.forEach(t => {
       const opt = document.createElement('option');
       opt.value = t;
-      const tag = selectedProvider ? '' : getTenancyProviderTag(t, tenanciesByProvider);
+      const tag = providerForSelect ? '' : getTenancyProviderTag(t, tenanciesByProvider);
       opt.textContent = `${formatTenancyName(t)}${tag}`;
       if (t === currentVal) opt.selected = true;
       el.appendChild(opt);
     });
   };
 
-  populateSelect('calc-tenancy');
-  populateSelect('rec-tenancy');
+  populateSelect('calc-tenancy', selectedProvider);
+  populateSelect('rec-tenancy', undefined);
 }
 
 function populateVcpuMemFamilies(data) {

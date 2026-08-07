@@ -2,6 +2,14 @@ import { parseInstanceMeta } from './recommendation-utils';
 
 const MONTHLY_HOURS = 720;
 
+export interface RecommendationMatchMetadata {
+  matchType: 'EXACT' | 'APPROXIMATE';
+  matchedOperatingSystem?: string;
+  matchedTenancy?: string;
+  matchedRegion?: string;
+  fallbackReason?: string;
+}
+
 export interface RecommendationResponseDto {
   autoSuggestedFamily: string;
   matrixRows: any[];
@@ -94,6 +102,10 @@ export async function mapToRecommendationResponseDto(
         savingsPercent: isOnDemand ? 30 : 0,
         currentGeneration: inst.currentGeneration,
         recommendation,
+        isBaseline: true,
+        matchScore: 100,
+        matchType: 'EXACT',
+        reasons: ['Baseline Instance'],
       };
 
       return {

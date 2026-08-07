@@ -199,6 +199,7 @@ model VmInstance {
   @@index([vcpu])
   @@index([memoryGib])
   @@index([hasGpu])
+  @@index([vcpu, memoryGib, hasGpu])
   @@map("vm_instances")
 }
 
@@ -228,6 +229,8 @@ model VmCapabilityMatrix {
   @@index([vmInstanceId])
   @@index([regionId])
   @@index([isActive])
+  @@index([vmInstanceId, isActive, isRegionAvailable])
+  @@index([operatingSystem, tenancy, isActive])
   @@map("vm_capability_matrix")
 }
 
@@ -251,6 +254,7 @@ model VmPricing {
   @@unique([capabilityMatrixId, pricingType])
   @@index([capabilityMatrixId])
   @@index([pricingType])
+  @@index([capabilityMatrixId, pricingType, hourlyCost])
   @@map("vm_pricing")
 }
 

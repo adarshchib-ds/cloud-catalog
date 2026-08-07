@@ -135,18 +135,37 @@ async function findEquivalents(
     equivalentMap.set(source.id, { aws: [], azure: [], gcp: [] });
   }
 
-  if (otherProviderIds.length === 0) return equivalentMap;
+  if (otherProviderIds.length === 0 || sourceInstances.length === 0) return equivalentMap;
+
+  const vcpuSet = [...new Set(sourceInstances.map(s => s.vcpu))];
+  const memorySet = [...new Set(sourceInstances.map(s => s.memoryGib))];
+  const gpuSet = [...new Set(sourceInstances.map(s => s.hasGpu))];
 
   const allCandidates = await db.vmInstance.findMany({
     where: {
       service: { providerId: { in: otherProviderIds }, isActive: true },
+      vcpu: { in: vcpuSet },
+      memoryGib: { in: memorySet },
+      ...(gpuSet.length === 1 ? { hasGpu: gpuSet[0] } : {}),
+      vmCapabilityMatrix: {
+        some: {
+          isActive: true,
+          isRegionAvailable: true,
+        },
+      },
     },
     include: {
       service: { include: { provider: true } },
       instanceFamily: true,
       vmCapabilityMatrix: {
         where: { isActive: true, isRegionAvailable: true },
-        include: { pricings: true },
+        include: {
+          pricings: {
+            where: {
+              pricingType: 'ON_DEMAND',
+            },
+          },
+        },
       },
     },
   });

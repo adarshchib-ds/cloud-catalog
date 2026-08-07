@@ -1,7 +1,8 @@
 import { prisma as db } from '@config/database';
 import { SmartRecommendationBody } from '@validators/instance.validator';
 import { calculatePriceRange } from '@utils/pricing';
-import { parseInstanceMeta, calculateScore } from '@utils/recommendation-utils';
+import { parseInstanceMeta, calculateScore, normalizeOperatingSystem } from '@utils/recommendation-utils';
+import { resolveOperatingSystemCandidates } from '@utils/os-resolver';
 import {
   mapToRecommendationResponseDto,
   RecommendationResponseDto,
@@ -29,7 +30,14 @@ export async function getSmartRecommendations(
     }
     matrixFilter.tenancy = tenancy;
   }
-  if (operatingSystem) matrixFilter.operatingSystem = operatingSystem;
+  if (operatingSystem) {
+    const osCandidates = resolveOperatingSystemCandidates(operatingSystem);
+    if (osCandidates.length > 0) {
+      matrixFilter.operatingSystem = { in: osCandidates };
+    } else {
+      matrixFilter.operatingSystem = operatingSystem;
+    }
+  }
   if (region) {
     matrixFilter.region = { code: { contains: region, mode: 'insensitive' }, isActive: true };
   }
@@ -80,6 +88,9 @@ export async function getSmartRecommendations(
 
   const targetType = pricingModel || 'ON_DEMAND';
 
+  // Pre-resolve OS candidates once — used by both the DB query and in-memory pricing logic
+  const osCandidates = operatingSystem ? resolveOperatingSystemCandidates(operatingSystem) : [];
+
   // Helper to resolve pricing from relational structure in memory
   const getHourlyCost = (inst: any): number => {
     const matrices = inst.vmCapabilityMatrix || [];
@@ -118,7 +129,8 @@ export async function getSmartRecommendations(
       )
         return false;
       if (tenancy && m.tenancy !== tenancy) return false;
-      if (operatingSystem && m.operatingSystem !== operatingSystem) return false;
+
+      if (osCandidates.length > 0 && !osCandidates.includes(m.operatingSystem)) return false;
       return true;
     });
 
@@ -147,6 +159,25 @@ export async function getSmartRecommendations(
     return calculatePriceRange(baseCost);
   };
 
+  const getAzureRegionCode = (awsCode: string): string => {
+    const map: Record<string, string> = {
+      'eu-west-1': 'northeurope',
+      'eu-west-3': 'westeurope',
+      'us-east-1': 'eastus',
+      'us-east-2': 'eastus2',
+      'us-west-1': 'westus',
+      'us-west-2': 'westus2',
+      'eu-central-1': 'germanywestcentral',
+      'eu-west-2': 'uksouth',
+      'ap-south-1': 'centralindia',
+      'ap-northeast-1': 'japaneast',
+      'ap-southeast-1': 'southeastasia',
+      'ap-southeast-2': 'australiaeast',
+      'sa-east-1': 'brazilsouth',
+    };
+    return map[awsCode.toLowerCase()] || awsCode;
+  };
+
   const capabilityInclude = {
     service: { include: { provider: true } },
     instanceFamily: true,
@@ -155,11 +186,23 @@ export async function getSmartRecommendations(
         isActive: true,
         isRegionAvailable: true,
         ...(tenancy ? { tenancy } : {}),
-        ...(operatingSystem ? { operatingSystem } : {}),
+        ...(osCandidates.length > 0 ? { operatingSystem: { in: osCandidates } } : {}),
+        ...(region
+          ? {
+              region: {
+                OR: [
+                  { code: { contains: region, mode: 'insensitive' } },
+                  { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
+                ],
+              },
+            }
+          : {}),
       },
       include: {
         region: true,
-        pricings: true,
+        pricings: {
+          where: { pricingType: targetType },
+        },
       },
     },
   };
@@ -175,10 +218,14 @@ export async function getSmartRecommendations(
     include: capabilityInclude as any,
   })) as any[];
 
-  baselineInstances.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
+  // Filter to only instances with valid pricing — prevents $0 baseline cards
+  // when newer AWS/Azure instances haven't had pricing fetched from the API yet
+  const pricedBaselineInstances = baselineInstances.filter(inst => getHourlyCost(inst) > 0);
+  const effectiveBaseline = pricedBaselineInstances.length > 0 ? pricedBaselineInstances : baselineInstances;
+  effectiveBaseline.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
 
   const familyFreq = new Map<string, { name: string; count: number }>();
-  for (const inst of baselineInstances) {
+  for (const inst of effectiveBaseline) {
     const fid = inst.instanceFamilyId;
     if (!familyFreq.has(fid)) familyFreq.set(fid, { name: inst.instanceFamily.name, count: 0 });
     familyFreq.get(fid)!.count++;
@@ -210,52 +257,34 @@ export async function getSmartRecommendations(
   const otherProviderIds = otherProviders.map(p => p.id);
 
   // ── 5. Fetch cross-cloud candidates for comparison ─────────────────────────
-  const getAzureRegionCode = (awsCode: string): string => {
-    const map: Record<string, string> = {
-      'eu-west-1': 'northeurope',
-      'eu-west-3': 'westeurope',
-      'us-east-1': 'eastus',
-      'us-east-2': 'eastus2',
-      'us-west-1': 'westus',
-      'us-west-2': 'westus2',
-      'eu-central-1': 'germanywestcentral',
-      'eu-west-2': 'uksouth',
-      'ap-south-1': 'centralindia',
-      'ap-northeast-1': 'japaneast',
-      'ap-southeast-1': 'southeastasia',
-      'ap-southeast-2': 'australiaeast',
-      'sa-east-1': 'brazilsouth',
-    };
-    return map[awsCode.toLowerCase()] || awsCode;
-  };
 
-  const crossCloudCandidates = (await db.vmInstance.findMany({
+  const targetVcpus = reqVcpu ? [reqVcpu] : [...new Set(effectiveBaseline.map(b => b.vcpu))];
+  const targetMemories = reqMemoryGib ? [reqMemoryGib] : [...new Set(effectiveBaseline.map(b => b.memoryGib))];
+  const targetGpu = [...new Set(effectiveBaseline.map(b => b.hasGpu))];
+
+  const crossCloudCandidates = effectiveBaseline.length === 0 ? [] : ((await db.vmInstance.findMany({
     where: {
       service: { providerId: { in: otherProviderIds }, isActive: true },
-      ...(reqVcpu ? { vcpu: reqVcpu } : {}),
-      ...(reqMemoryGib ? { memoryGib: reqMemoryGib } : {}),
-      ...(tenancy || operatingSystem || region
-        ? {
-            vmCapabilityMatrix: {
-              some: {
-                isActive: true,
-                isRegionAvailable: true,
-                ...(tenancy ? { tenancy } : {}),
-                ...(operatingSystem ? { operatingSystem } : {}),
-                ...(region
-                  ? {
-                      region: {
-                        OR: [
-                          { code: { contains: region, mode: 'insensitive' } },
-                          { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
-                        ],
-                      },
-                    }
-                  : {}),
-              },
-            },
-          }
-        : {}),
+      vcpu: { in: targetVcpus },
+      memoryGib: { in: targetMemories },
+      ...(targetGpu.length === 1 ? { hasGpu: targetGpu[0] } : {}),
+      vmCapabilityMatrix: {
+        some: {
+          isActive: true,
+          isRegionAvailable: true,
+          ...(tenancy ? { tenancy } : {}),
+          ...(region
+            ? {
+                region: {
+                  OR: [
+                    { code: { contains: region, mode: 'insensitive' } },
+                    { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
+                  ],
+                },
+              }
+            : {}),
+        },
+      },
     },
     include: {
       service: { include: { provider: true } },
@@ -265,20 +294,34 @@ export async function getSmartRecommendations(
           isActive: true,
           isRegionAvailable: true,
           ...(tenancy ? { tenancy } : {}),
-          ...(operatingSystem ? { operatingSystem } : {}),
+          ...(region
+            ? {
+                region: {
+                  OR: [
+                    { code: { contains: region, mode: 'insensitive' } },
+                    { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
+                  ],
+                },
+              }
+            : {}),
         },
+        take: 15,
         include: {
           region: true,
-          pricings: true,
+          pricings: {
+            where: { pricingType: targetType },
+          },
         },
       },
     },
-  })) as any[];
+  })) as any[]);
 
-  // Helper function to find best cross-cloud equivalent
+  // Helper function to find best cross-cloud equivalent using 4-Tier Progressive Candidate Selection
   const findBestEquivalent = (candInst: any, targetProviderSlug: string) => {
     const baseMeta = parseInstanceMeta(candInst);
-    const candidates = crossCloudCandidates.filter((item: any) => {
+    
+    // Filter cross-cloud candidates by target provider
+    const providerCandidates = crossCloudCandidates.filter((item: any) => {
       const slug = item.service?.provider?.slug?.toLowerCase() || '';
       const pid = item.service?.providerId?.toLowerCase() || '';
       return (
@@ -289,10 +332,48 @@ export async function getSmartRecommendations(
       );
     });
 
-    if (!candidates.length) return null;
+    if (!providerCandidates.length) return null;
 
-    const scored = candidates.map((c: any) => {
-      const candPrice = getHourlyCost(c);
+    const requestedOs = operatingSystem ? operatingSystem.toUpperCase() : undefined;
+    const requestedTenancy = tenancy ? tenancy : undefined;
+    const requestedRegion = region ? region : undefined;
+
+    // Helper to evaluate candidate eligibility under specific OS, tenancy, and region constraints
+    const evaluateCandidate = (
+      c: any,
+      targetOs?: string,
+      targetTenancy?: string,
+      targetRegion?: string,
+    ) => {
+      const matrices = c.vmCapabilityMatrix || [];
+      const matchingMatrix = matrices.find((m: any) => {
+        if (targetOs && m.operatingSystem !== targetOs) return false;
+        if (targetTenancy && m.tenancy !== targetTenancy) return false;
+        if (targetRegion) {
+          const rCode = m.region?.code?.toLowerCase() || '';
+          if (
+            !rCode.includes(targetRegion.toLowerCase()) &&
+            !rCode.includes(getAzureRegionCode(targetRegion).toLowerCase())
+          ) {
+            return false;
+          }
+        }
+        const hasPricing = m.pricings?.some(
+          (p: any) => p.pricingType === targetType && Number(p.hourlyCost) > 0,
+        );
+        return hasPricing;
+      });
+
+      if (!matchingMatrix) return null;
+
+      const pricing = matchingMatrix.pricings.find(
+        (p: any) => p.pricingType === targetType && Number(p.hourlyCost) > 0,
+      );
+      if (!pricing) return null;
+
+      const hourlyPrice = Number(pricing.hourlyCost);
+      if (hourlyPrice <= 0) return null;
+
       const candMeta = parseInstanceMeta(c);
       const basePrice = getHourlyCost(candInst);
 
@@ -300,37 +381,124 @@ export async function getSmartRecommendations(
         baseMeta,
         candMeta,
         { ...candInst, hourlyCost: basePrice },
-        { ...c, hourlyCost: candPrice },
+        { ...c, hourlyCost: hourlyPrice },
       );
-      const reasons: string[] = [];
 
+      const reasons: string[] = [];
       if (c.vcpu === candInst.vcpu && c.memoryGib === candInst.memoryGib) {
         reasons.push('Identical vCPU and RAM configuration');
       } else {
         reasons.push('Proportional compute capacity match');
       }
-
       if (candInst.hasGpu && c.hasGpu) {
         reasons.push('GPU capability match');
       }
-
       if (c.instanceFamily?.series === candInst.instanceFamily?.series) {
         reasons.push('Matching architectural performance tier');
       }
 
-      return { c, score, candPrice, reasons, candMeta };
-    });
+      return {
+        candidate: c,
+        score,
+        hourlyPrice,
+        reasons,
+        candMeta,
+        matchedMatrix: matchingMatrix,
+      };
+    };
 
-    scored.sort((a, b) => b.score - a.score || a.candPrice - b.candPrice);
+    let winnerResult: any = null;
+    let matchType: 'EXACT' | 'APPROXIMATE' = 'EXACT';
+    let matchedTen: string | undefined = requestedTenancy;
+    let matchedReg = requestedRegion;
+    let fallbackReason: string | undefined = undefined;
 
-    const best = scored[0];
-    if (!best) return null;
+    // ── TIER 1: EXACT MATCH ──────────────────────────────────────────────────
+    let tier1Evaluations = providerCandidates
+      .map((c) => evaluateCandidate(c, requestedOs, requestedTenancy, requestedRegion))
+      .filter((res): res is NonNullable<typeof res> => res !== null);
 
-    const onDemand = Number(getHourlyCost(best.c));
-    const onDemandRange = getHourlyCostRange(best.c);
+    if (tier1Evaluations.length > 0) {
+      tier1Evaluations.sort((a, b) => b.score - a.score || a.hourlyPrice - b.hourlyPrice);
+      winnerResult = tier1Evaluations[0];
+      matchType = 'EXACT';
+    }
+
+    // ── TIER 2: OS NORMALIZATION (Azure & GCP Distro -> LINUX) ───────────────
+    if (!winnerResult && requestedOs && (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')) {
+      const normalizedOs = normalizeOperatingSystem(targetProviderSlug, requestedOs);
+
+      if (normalizedOs === 'LINUX' && requestedOs !== 'LINUX') {
+        let tier2Evaluations = providerCandidates
+          .map((c) => evaluateCandidate(c, 'LINUX', requestedTenancy, requestedRegion))
+          .filter((res): res is NonNullable<typeof res> => res !== null);
+
+        if (tier2Evaluations.length > 0) {
+          tier2Evaluations.sort((a, b) => b.score - a.score || a.hourlyPrice - b.hourlyPrice);
+          winnerResult = tier2Evaluations[0];
+          matchType = 'APPROXIMATE';
+          fallbackReason = 'Provider catalogs Linux distributions under generic Linux pricing.';
+        }
+      }
+    }
+
+    // ── TIER 3: TENANCY FALLBACK ─────────────────────────────────────────────
+    if (!winnerResult && requestedTenancy) {
+      const activeOsFilter = (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')
+        ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || 'LINUX')
+        : requestedOs;
+
+      const tenancyOrder = ['DEDICATED_HOST', 'DEDICATED_INSTANCE', 'SHARED'];
+      const startIndex = tenancyOrder.indexOf(requestedTenancy);
+      const fallbackTenancies = startIndex >= 0 ? tenancyOrder.slice(startIndex + 1) : ['SHARED'];
+
+      for (const fallbackTen of fallbackTenancies) {
+        let tier3Evaluations = providerCandidates
+          .map((c) => evaluateCandidate(c, activeOsFilter, fallbackTen, requestedRegion))
+          .filter((res): res is NonNullable<typeof res> => res !== null);
+
+        if (tier3Evaluations.length > 0) {
+          tier3Evaluations.sort((a, b) => b.score - a.score || a.hourlyPrice - b.hourlyPrice);
+          winnerResult = tier3Evaluations[0];
+          matchType = 'APPROXIMATE';
+          matchedTen = fallbackTen;
+          fallbackReason = `Provider does not offer ${requestedTenancy} tenancy for this SKU. Rerecommended ${fallbackTen} tenancy.`;
+          break;
+        }
+      }
+    }
+
+    // ── TIER 4: REGION FALLBACK ──────────────────────────────────────────────
+    if (!winnerResult) {
+      const activeOsFilter = (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')
+        ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || 'LINUX')
+        : requestedOs;
+      const activeTenancyFilter = matchedTen || requestedTenancy;
+
+      let tier4Evaluations = providerCandidates
+        .map((c) => evaluateCandidate(c, activeOsFilter, activeTenancyFilter, undefined))
+        .filter((res): res is NonNullable<typeof res> => res !== null);
+
+      if (tier4Evaluations.length > 0) {
+        tier4Evaluations.sort((a, b) => b.score - a.score || a.hourlyPrice - b.hourlyPrice);
+        winnerResult = tier4Evaluations[0];
+        matchType = 'APPROXIMATE';
+        matchedReg = winnerResult.matchedMatrix.region?.code || 'Global Default';
+        if (!fallbackReason) {
+          fallbackReason = 'Rerecommended best available region with valid pricing catalog.';
+        }
+      }
+    }
+
+    if (!winnerResult) return null;
+
+    const best = winnerResult;
+    const onDemand = best.hourlyPrice;
+    const onDemandRange = calculatePriceRange(onDemand);
+
     return {
-      equivalentFamily: best.c.instanceFamily.name,
-      recommendedInstance: best.c.instanceType,
+      equivalentFamily: best.candidate.instanceFamily.name,
+      recommendedInstance: best.candidate.instanceType,
       matchScore: best.score,
       onDemandHourlyCost: onDemand.toFixed(4),
       onDemandMonthlyCost: (onDemand * MONTHLY_HOURS).toFixed(2),
@@ -338,23 +506,30 @@ export async function getSmartRecommendations(
       onDemandHourlyCostMax: Number(onDemandRange.max).toFixed(4),
       onDemandMonthlyCostMin: (Number(onDemandRange.min) * MONTHLY_HOURS).toFixed(2),
       onDemandMonthlyCostMax: (Number(onDemandRange.max) * MONTHLY_HOURS).toFixed(2),
-      vcpu: best.c.vcpu,
-      memoryGib: best.c.memoryGib,
-      storageSummary: best.c.storageSummary || 'SSD Only',
+      vcpu: best.candidate.vcpu,
+      memoryGib: best.candidate.memoryGib,
+      storageSummary: best.candidate.storageSummary || 'SSD Only',
       category: best.candMeta.category,
       architecture: best.candMeta.architecture,
       generation: String(best.candMeta.generation),
-      operatingSystem: (best.c.vmCapabilityMatrix?.[0]?.operatingSystem || 'LINUX').toUpperCase(),
-      tenancy: best.c.vmCapabilityMatrix?.[0]?.tenancy,
-      licenseType: best.c.vmCapabilityMatrix?.[0]?.licenseType || 'INCLUDED',
+      operatingSystem: (best.matchedMatrix.operatingSystem || 'LINUX').toUpperCase(),
+      tenancy: best.matchedMatrix.tenancy,
+      licenseType: best.matchedMatrix.licenseType || 'INCLUDED',
       reasons: best.reasons,
-      currentGeneration: best.c.currentGeneration,
+      currentGeneration: best.candidate.currentGeneration,
+
+      // Metadata Extensions
+      matchType,
+      matchedOperatingSystem: (best.matchedMatrix.operatingSystem || 'LINUX').toUpperCase(),
+      matchedTenancy: best.matchedMatrix.tenancy,
+      matchedRegion: best.matchedMatrix.region?.code || matchedReg,
+      fallbackReason,
     };
   };
 
   // ── 6. Build matrix rows using the Mapper layer ─────────────────────────────
   return mapToRecommendationResponseDto(
-    baselineInstances,
+    effectiveBaseline,
     suggestedFamilyName,
     pricingModel,
     getHourlyCost,

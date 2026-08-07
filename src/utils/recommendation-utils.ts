@@ -129,13 +129,43 @@ export function calculateScore(awsMeta: any, candMeta: any, aws: any, cand: any)
   const awsPrice = aws.hourlyCost || 0;
   const candPrice = cand.hourlyCost || 0;
   if (awsPrice > 0 && candPrice > 0) {
-    const priceDiff = Math.abs(awsPrice - candPrice) / awsPrice;
-    const priceScore = Math.max(0, 5 * (1 - priceDiff));
-    score += priceScore;
-    if (priceDiff <= 0.15) {
-      reasons.push('Highly similar price');
+    if (candPrice <= awsPrice) {
+      score += 5;
+      reasons.push('Lower or equal hourly price');
+    } else {
+      const priceDiff = (candPrice - awsPrice) / awsPrice;
+      const priceScore = Math.max(0, 5 * (1 - priceDiff));
+      score += priceScore;
+      if (priceDiff <= 0.15) {
+        reasons.push('Highly similar price');
+      }
     }
   }
 
   return { score: Math.round(score), reasons };
 }
+
+/**
+ * Normalizes provider-specific operating system queries.
+ * AWS maintains distro-specific SKUs (Ubuntu, Red Hat, SUSE),
+ * while Azure and GCP store Linux distributions under generic 'LINUX'.
+ */
+export function normalizeOperatingSystem(providerSlug: string, requestedOs?: string): string | undefined {
+  if (!requestedOs) return undefined;
+  const osUpper = requestedOs.toUpperCase();
+  const slugLower = providerSlug.toLowerCase();
+
+  const isAws = slugLower.includes('amazon') || slugLower.includes('aws');
+  if (isAws) {
+    return osUpper;
+  }
+
+  // Azure and GCP Distro Normalization to generic LINUX
+  const linuxDistros = ['UBUNTU', 'RED_HAT', 'SUSE', 'DEBIAN', 'ORACLE_LINUX', 'LINUX'];
+  if (linuxDistros.includes(osUpper)) {
+    return 'LINUX';
+  }
+
+  return osUpper;
+}
+
