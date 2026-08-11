@@ -109,9 +109,9 @@ export async function mapToRecommendationResponseDto(
       };
 
       return {
-        aws: isBaselineAws ? baseObj : awsMatch,
-        azure: isBaselineAzure ? baseObj : azureMatch,
-        gcp: isBaselineGcp ? baseObj : gcpMatch,
+        aws: isBaselineAws ? baseObj : (awsMatch ? { ...awsMatch, operatingSystem: awsMatch.matchedMatrix?.operatingSystem || awsMatch.operatingSystem || 'LINUX' } : null),
+        azure: isBaselineAzure ? baseObj : (azureMatch ? { ...azureMatch, operatingSystem: azureMatch.matchedMatrix?.operatingSystem || azureMatch.operatingSystem || 'LINUX' } : null),
+        gcp: isBaselineGcp ? baseObj : (gcpMatch ? { ...gcpMatch, operatingSystem: gcpMatch.matchedMatrix?.operatingSystem || gcpMatch.operatingSystem || 'LINUX' } : null),
         reason: allReasons,
       };
     }),

@@ -1,7 +1,7 @@
 import { prisma as db } from '@config/database';
 import { SmartRecommendationBody } from '@validators/instance.validator';
 import { calculatePriceRange } from '@utils/pricing';
-import { parseInstanceMeta, calculateScore, normalizeOperatingSystem } from '@utils/recommendation-utils';
+import { parseInstanceMeta, calculateScore, normalizeOperatingSystem, normalizeRegionForProvider } from '@utils/recommendation-utils';
 import { resolveOperatingSystemCandidates } from '@utils/os-resolver';
 import {
   mapToRecommendationResponseDto,
@@ -39,7 +39,17 @@ export async function getSmartRecommendations(
     }
   }
   if (region) {
-    matrixFilter.region = { code: { contains: region, mode: 'insensitive' }, isActive: true };
+    const allowedRegions = Array.from(
+      new Set([
+        ...normalizeRegionForProvider('aws', region),
+        ...normalizeRegionForProvider('azure', region),
+        ...normalizeRegionForProvider('gcp', region),
+      ]),
+    );
+    matrixFilter.region = {
+      OR: allowedRegions.map((r) => ({ code: { contains: r, mode: 'insensitive' } })),
+      isActive: true,
+    };
   }
 
   // Find all providers with matching capability rows
@@ -61,12 +71,14 @@ export async function getSmartRecommendations(
     select: { id: true, slug: true },
   });
 
-  // Default priority order: AWS -> Azure -> GCP (if multiple match), or whichever provider satisfies criteria
+  // Default priority order: GCP if SOLE_TENANT requested, else AWS -> Azure -> GCP
   const baselineProvider =
-    matchingProviders.find(p => p.slug === 'amazon-web-services' || p.id === 'aws') ||
-    matchingProviders.find(p => p.slug.includes('azure') || p.id === 'azure') ||
-    matchingProviders.find(p => p.slug.includes('gcp') || p.id === 'gcp') ||
-    matchingProviders[0];
+    tenancy === 'SOLE_TENANT'
+      ? matchingProviders.find((p) => p.slug.includes('gcp') || p.id === 'gcp') || matchingProviders[0]
+      : matchingProviders.find((p) => p.slug === 'amazon-web-services' || p.id === 'aws') ||
+        matchingProviders.find((p) => p.slug.includes('azure') || p.id === 'azure') ||
+        matchingProviders.find((p) => p.slug.includes('gcp') || p.id === 'gcp') ||
+        matchingProviders[0];
 
   if (!baselineProvider) {
     return {
@@ -102,32 +114,13 @@ export async function getSmartRecommendations(
     const activeMatrices = matricesWithTargetType.length > 0 ? matricesWithTargetType : matrices;
     const resolvedType = matricesWithTargetType.length > 0 ? targetType : 'ON_DEMAND';
 
-    const getAzureRegionCode = (awsCode: string): string => {
-      const map: Record<string, string> = {
-        'eu-west-1': 'northeurope',
-        'eu-west-3': 'westeurope',
-        'us-east-1': 'eastus',
-        'us-east-2': 'eastus2',
-        'us-west-1': 'westus',
-        'us-west-2': 'westus2',
-        'eu-central-1': 'germanywestcentral',
-        'eu-west-2': 'uksouth',
-        'ap-south-1': 'centralindia',
-        'ap-northeast-1': 'japaneast',
-        'ap-southeast-1': 'southeastasia',
-        'ap-southeast-2': 'australiaeast',
-        'sa-east-1': 'brazilsouth',
-      };
-      return map[awsCode.toLowerCase()] || awsCode;
-    };
-
     let matrix = activeMatrices.find((m: any) => {
-      if (
-        region &&
-        !m.region?.code?.toLowerCase().includes(region.toLowerCase()) &&
-        !m.region?.code?.toLowerCase().includes(getAzureRegionCode(region).toLowerCase())
-      )
-        return false;
+      if (region) {
+        const rCode = m.region?.code?.toLowerCase() || '';
+        const providerSlug = inst.service?.provider?.slug || inst.service?.providerId || 'aws';
+        const allowedRegions = normalizeRegionForProvider(providerSlug, region);
+        if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) return false;
+      }
       if (tenancy && m.tenancy !== tenancy) return false;
 
       if (osCandidates.length > 0 && !osCandidates.includes(m.operatingSystem)) return false;
@@ -136,12 +129,12 @@ export async function getSmartRecommendations(
 
     if (!matrix && !tenancy && !operatingSystem) {
       matrix = activeMatrices.find((m: any) => {
-        if (
-          region &&
-          !m.region?.code?.toLowerCase().includes(region.toLowerCase()) &&
-          !m.region?.code?.toLowerCase().includes(getAzureRegionCode(region).toLowerCase())
-        )
-          return false;
+        if (region) {
+          const rCode = m.region?.code?.toLowerCase() || '';
+          const providerSlug = inst.service?.provider?.slug || inst.service?.providerId || 'aws';
+          const allowedRegions = normalizeRegionForProvider(providerSlug, region);
+          if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) return false;
+        }
         return true;
       });
     }
@@ -159,24 +152,6 @@ export async function getSmartRecommendations(
     return calculatePriceRange(baseCost);
   };
 
-  const getAzureRegionCode = (awsCode: string): string => {
-    const map: Record<string, string> = {
-      'eu-west-1': 'northeurope',
-      'eu-west-3': 'westeurope',
-      'us-east-1': 'eastus',
-      'us-east-2': 'eastus2',
-      'us-west-1': 'westus',
-      'us-west-2': 'westus2',
-      'eu-central-1': 'germanywestcentral',
-      'eu-west-2': 'uksouth',
-      'ap-south-1': 'centralindia',
-      'ap-northeast-1': 'japaneast',
-      'ap-southeast-1': 'southeastasia',
-      'ap-southeast-2': 'australiaeast',
-      'sa-east-1': 'brazilsouth',
-    };
-    return map[awsCode.toLowerCase()] || awsCode;
-  };
 
   const capabilityInclude = {
     service: { include: { provider: true } },
@@ -190,10 +165,9 @@ export async function getSmartRecommendations(
         ...(region
           ? {
               region: {
-                OR: [
-                  { code: { contains: region, mode: 'insensitive' } },
-                  { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
-                ],
+                OR: normalizeRegionForProvider(baselineProvider.slug || baselineProvider.id || 'aws', region).map((r) => ({
+                  code: { contains: r, mode: 'insensitive' },
+                })),
               },
             }
           : {}),
@@ -262,6 +236,20 @@ export async function getSmartRecommendations(
   const targetMemories = reqMemoryGib ? [reqMemoryGib] : [...new Set(effectiveBaseline.map(b => b.memoryGib))];
   const targetGpu = [...new Set(effectiveBaseline.map(b => b.hasGpu))];
 
+  const candidateRegionFilter = region
+    ? {
+        region: {
+          OR: Array.from(
+            new Set([
+              ...normalizeRegionForProvider('aws', region),
+              ...normalizeRegionForProvider('azure', region),
+              ...normalizeRegionForProvider('gcp', region),
+            ]),
+          ).map((r) => ({ code: { contains: r, mode: 'insensitive' as const } })),
+        },
+      }
+    : {};
+
   const crossCloudCandidates = effectiveBaseline.length === 0 ? [] : ((await db.vmInstance.findMany({
     where: {
       service: { providerId: { in: otherProviderIds }, isActive: true },
@@ -273,19 +261,11 @@ export async function getSmartRecommendations(
           isActive: true,
           isRegionAvailable: true,
           ...(tenancy ? { tenancy } : {}),
-          ...(region
-            ? {
-                region: {
-                  OR: [
-                    { code: { contains: region, mode: 'insensitive' } },
-                    { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
-                  ],
-                },
-              }
-            : {}),
+          ...candidateRegionFilter,
         },
       },
     },
+    take: 100,
     include: {
       service: { include: { provider: true } },
       instanceFamily: true,
@@ -294,18 +274,9 @@ export async function getSmartRecommendations(
           isActive: true,
           isRegionAvailable: true,
           ...(tenancy ? { tenancy } : {}),
-          ...(region
-            ? {
-                region: {
-                  OR: [
-                    { code: { contains: region, mode: 'insensitive' } },
-                    { code: { contains: getAzureRegionCode(region), mode: 'insensitive' } },
-                  ],
-                },
-              }
-            : {}),
+          ...candidateRegionFilter,
         },
-        take: 15,
+        take: 20,
         include: {
           region: true,
           pricings: {
@@ -346,15 +317,15 @@ export async function getSmartRecommendations(
       targetRegion?: string,
     ) => {
       const matrices = c.vmCapabilityMatrix || [];
+      const providerSlug = c.service?.provider?.slug || c.service?.providerId || targetProviderSlug;
+      const allowedRegions = targetRegion ? normalizeRegionForProvider(providerSlug, targetRegion) : [];
+
       const matchingMatrix = matrices.find((m: any) => {
         if (targetOs && m.operatingSystem !== targetOs) return false;
         if (targetTenancy && m.tenancy !== targetTenancy) return false;
         if (targetRegion) {
           const rCode = m.region?.code?.toLowerCase() || '';
-          if (
-            !rCode.includes(targetRegion.toLowerCase()) &&
-            !rCode.includes(getAzureRegionCode(targetRegion).toLowerCase())
-          ) {
+          if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) {
             return false;
           }
         }
@@ -424,8 +395,9 @@ export async function getSmartRecommendations(
       matchType = 'EXACT';
     }
 
-    // ── TIER 2: OS NORMALIZATION (Azure & GCP Distro -> LINUX) ───────────────
-    if (!winnerResult && requestedOs && (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')) {
+    // ── TIER 2: OS NORMALIZATION (Azure & GCP Open-Source Distro -> LINUX) ───
+    const isCommercialOs = ['WINDOWS', 'WINDOWS_SQL_SERVER', 'RED_HAT', 'RHEL_SAP', 'SUSE', 'SLES_SAP'].includes(requestedOs || '');
+    if (!winnerResult && requestedOs && !isCommercialOs && (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')) {
       const normalizedOs = normalizeOperatingSystem(targetProviderSlug, requestedOs);
 
       if (normalizedOs === 'LINUX' && requestedOs !== 'LINUX') {
@@ -444,9 +416,11 @@ export async function getSmartRecommendations(
 
     // ── TIER 3: TENANCY FALLBACK ─────────────────────────────────────────────
     if (!winnerResult && requestedTenancy) {
-      const activeOsFilter = (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')
-        ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || 'LINUX')
-        : requestedOs;
+      const activeOsFilter = requestedOs
+        ? ((targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
+          ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs)
+          : requestedOs)
+        : undefined;
 
       const tenancyOrder = ['DEDICATED_HOST', 'DEDICATED_INSTANCE', 'SHARED'];
       const startIndex = tenancyOrder.indexOf(requestedTenancy);
@@ -470,9 +444,11 @@ export async function getSmartRecommendations(
 
     // ── TIER 4: REGION FALLBACK ──────────────────────────────────────────────
     if (!winnerResult) {
-      const activeOsFilter = (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')
-        ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || 'LINUX')
-        : requestedOs;
+      const activeOsFilter = requestedOs
+        ? ((targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
+          ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs)
+          : requestedOs)
+        : undefined;
       const activeTenancyFilter = matchedTen || requestedTenancy;
 
       let tier4Evaluations = providerCandidates

@@ -10,6 +10,26 @@ export function resolveOperatingSystemCandidates(requestedOs?: string | null): s
 
   const clean = requestedOs.toUpperCase().trim();
 
+  // Windows SQL Server Family mappings (Strictly Windows only)
+  if (clean.includes('WINDOWS') && clean.includes('SQL')) {
+    return ['WINDOWS_SQL_SERVER', 'WINDOWS'];
+  }
+
+  // Windows Standard Family mappings (Strictly Windows only)
+  if (clean.includes('WINDOWS')) {
+    return ['WINDOWS', 'WINDOWS_SQL_SERVER'];
+  }
+
+  // Red Hat Family mappings (Strictly RHEL only - no generic Linux mix)
+  if (clean.includes('RED_HAT') || clean.includes('RHEL')) {
+    return ['RED_HAT', 'RHEL_SAP'];
+  }
+
+  // SUSE Family mappings (Strictly SUSE only - no generic Linux mix)
+  if (clean.includes('SUSE') || clean.includes('SLES')) {
+    return ['SUSE', 'SLES_SAP'];
+  }
+
   // Linux Standard Family mappings (Ubuntu, Debian, AlmaLinux, Oracle Linux, Flatcar, Generic Linux)
   if (
     clean.includes('UBUNTU') ||
@@ -22,26 +42,6 @@ export function resolveOperatingSystemCandidates(requestedOs?: string | null): s
     return ['LINUX', 'UBUNTU', 'DEBIAN', 'ALMALINUX', 'FLATCAR', 'ORACLE_LINUX'];
   }
 
-  // Red Hat Family mappings (RHEL, RHEL SAP)
-  if (clean.includes('RED_HAT') || clean.includes('RHEL')) {
-    return ['RED_HAT', 'RHEL_SAP', 'LINUX'];
-  }
-
-  // SUSE Family mappings (SLES, SLES SAP)
-  if (clean.includes('SUSE') || clean.includes('SLES')) {
-    return ['SUSE', 'SLES_SAP', 'LINUX'];
-  }
-
-  // Windows SQL Server Family mappings
-  if (clean.includes('WINDOWS') && clean.includes('SQL')) {
-    return ['WINDOWS_SQL_SERVER', 'WINDOWS'];
-  }
-
-  // Windows Standard Family mappings
-  if (clean.includes('WINDOWS')) {
-    return ['WINDOWS', 'WINDOWS_SQL_SERVER'];
-  }
-
-  // Default fallback: exact requested string + generic LINUX fallback
-  return [clean, 'LINUX'];
+  // Default fallback: exact requested string only
+  return [clean];
 }
