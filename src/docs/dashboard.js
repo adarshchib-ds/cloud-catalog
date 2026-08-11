@@ -563,6 +563,36 @@ function goToCalcPage(page) {
   calculate(pageNum);
 }
 
+function formatRegionDisplayName(r) {
+  if (!r) return '';
+  if (r.name && r.name !== r.code) {
+    return `${r.name} (${r.code})`;
+  }
+  return `${r.code}`;
+}
+
+async function loadRecRegions() {
+  const sel = document.getElementById('rec-region');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Loading regions...</option>';
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/instances/regions`);
+    const data = await res.json();
+    sel.innerHTML = '<option value="">Any Region (Global Search)</option>';
+    if (data.success && data.data) {
+      data.data.forEach(r => {
+        const o = document.createElement('option');
+        o.value = r.code;
+        o.textContent = formatRegionDisplayName(r);
+        sel.appendChild(o);
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load recommendation regions', e);
+    sel.innerHTML = '<option value="">Any Region (Global Search)</option>';
+  }
+}
+
 async function onCalcProviderChange() {
   const p = document.getElementById('calc-provider').value;
   const sel = document.getElementById('calc-region');
@@ -576,7 +606,7 @@ async function onCalcProviderChange() {
       data.data.forEach(r => {
         const o = document.createElement('option');
         o.value = r.code;
-        o.textContent = `${r.name} (${r.code})`;
+        o.textContent = formatRegionDisplayName(r);
         sel.appendChild(o);
       });
     }
