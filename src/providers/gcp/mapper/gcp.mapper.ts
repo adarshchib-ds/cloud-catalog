@@ -100,17 +100,41 @@ export function resolveGcpCpuFrequency(machineTypeName: string): number | null {
 export function resolveGcpEnhancedNetworking(machineTypeName: string): boolean {
   const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
   // Compute Engine gVNIC / Tier 1 networking supported series per official Google Cloud documentation
-  return ['c3', 'c3d', 'c4', 'c4a', 'c4d', 'n2', 'n2d', 'n4', 'z3', 'h3', 'm3', 'm4', 'a3', 'g2'].includes(familyToken);
+  return [
+    'c3',
+    'c3d',
+    'c4',
+    'c4a',
+    'c4d',
+    'n2',
+    'n2d',
+    'n4',
+    'z3',
+    'h3',
+    'm3',
+    'm4',
+    'a3',
+    'g2',
+  ].includes(familyToken);
 }
 
-export function resolveGcpCurrentGeneration(machineTypeName: string, deprecatedState?: string): boolean {
+export function resolveGcpCurrentGeneration(
+  machineTypeName: string,
+  deprecatedState?: string,
+): boolean {
   if (deprecatedState && deprecatedState.trim() !== '') {
-    const isDeprecated = ['DEPRECATED', 'OBSOLETE', 'DELETED'].includes(deprecatedState.toUpperCase());
+    const isDeprecated = ['DEPRECATED', 'OBSOLETE', 'DELETED'].includes(
+      deprecatedState.toUpperCase(),
+    );
     return !isDeprecated;
   }
   const familyToken = machineTypeName.split('-')[0]?.toLowerCase() || '';
   const legacyFamilies = ['n1', 'f1-micro', 'g1-small', 'm1'];
-  if (legacyFamilies.includes(familyToken) || machineTypeName === 'f1-micro' || machineTypeName === 'g1-small') {
+  if (
+    legacyFamilies.includes(familyToken) ||
+    machineTypeName === 'f1-micro' ||
+    machineTypeName === 'g1-small'
+  ) {
     return false;
   }
   return true;
@@ -141,7 +165,13 @@ export function mapVmInstance(raw: GcpRawMachineType): NormalizedVmInstanceDTO {
 
   const hasGpu = !!raw.accelerators?.length;
   const firstAccelerator = raw.accelerators?.[0];
-  const burstable = raw.isSharedCpu === true || raw.name === 'f1-micro' || raw.name === 'g1-small' || raw.name.startsWith('e2-micro') || raw.name.startsWith('e2-small') || raw.name.startsWith('e2-medium');
+  const burstable =
+    raw.isSharedCpu === true ||
+    raw.name === 'f1-micro' ||
+    raw.name === 'g1-small' ||
+    raw.name.startsWith('e2-micro') ||
+    raw.name.startsWith('e2-small') ||
+    raw.name.startsWith('e2-medium');
 
   let gpuManufacturer: string | null = null;
   if (hasGpu && firstAccelerator?.guestAcceleratorType) {

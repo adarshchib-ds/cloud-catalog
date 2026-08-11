@@ -150,7 +150,10 @@ export function calculateScore(awsMeta: any, candMeta: any, aws: any, cand: any)
  * AWS maintains distro-specific SKUs (Ubuntu, Red Hat, SUSE),
  * while Azure and GCP store Linux distributions under generic 'LINUX'.
  */
-export function normalizeOperatingSystem(providerSlug: string, requestedOs?: string): string | undefined {
+export function normalizeOperatingSystem(
+  providerSlug: string,
+  requestedOs?: string,
+): string | undefined {
   if (!requestedOs) return undefined;
   const osUpper = requestedOs.toUpperCase();
   const slugLower = providerSlug.toLowerCase();
@@ -252,10 +255,11 @@ export function normalizeRegionForProvider(providerSlug: string, inputRegion?: s
   const isGcp = slugLower.includes('gcp') || slugLower.includes('google');
 
   // Find matching groups for the input region
-  const matchingGroups = REGION_GROUPS.filter((group) =>
-    group.aws.some((r) => r.toLowerCase() === regLower) ||
-    group.azure.some((r) => r.toLowerCase() === regLower) ||
-    group.gcp.some((r) => r.toLowerCase() === regLower)
+  const matchingGroups = REGION_GROUPS.filter(
+    group =>
+      group.aws.some(r => r.toLowerCase() === regLower) ||
+      group.azure.some(r => r.toLowerCase() === regLower) ||
+      group.gcp.some(r => r.toLowerCase() === regLower),
   );
 
   if (matchingGroups.length > 0) {
@@ -264,15 +268,15 @@ export function normalizeRegionForProvider(providerSlug: string, inputRegion?: s
 
     for (const group of matchingGroups) {
       if (isAws) {
-        group.aws.forEach((r) => results.add(r));
+        group.aws.forEach(r => results.add(r));
       } else if (isAzure) {
-        group.azure.forEach((r) => results.add(r));
+        group.azure.forEach(r => results.add(r));
       } else if (isGcp) {
-        group.gcp.forEach((r) => results.add(r));
+        group.gcp.forEach(r => results.add(r));
       } else {
-        group.aws.forEach((r) => results.add(r));
-        group.azure.forEach((r) => results.add(r));
-        group.gcp.forEach((r) => results.add(r));
+        group.aws.forEach(r => results.add(r));
+        group.azure.forEach(r => results.add(r));
+        group.gcp.forEach(r => results.add(r));
       }
     }
     return Array.from(results);
@@ -281,5 +285,3 @@ export function normalizeRegionForProvider(providerSlug: string, inputRegion?: s
   const cleanReg = regLower.replace(/[^a-z0-9]/g, '');
   return Array.from(new Set([regLower, cleanReg]));
 }
-
-

@@ -58,7 +58,11 @@ export function parseSeriesMarkdown(markdown: string, path: string): ParsedSerie
     if (tableProcMatch) {
       const rawProc = tableProcMatch[1].trim();
       if (rawProc && !rawProc.toLowerCase().includes('qty') && !rawProc.startsWith('---')) {
-        processor = rawProc.replace(/\[[^\]]+\]/g, '').replace(/<[^>]+>/g, '').replace(/[®™]/g, '').trim();
+        processor = rawProc
+          .replace(/\[[^\]]+\]/g, '')
+          .replace(/<[^>]+>/g, '')
+          .replace(/[®™]/g, '')
+          .trim();
       }
     }
 
@@ -76,11 +80,25 @@ export function parseSeriesMarkdown(markdown: string, path: string): ParsedSerie
     }
 
     if (processor && !cpuFrequencyGhz) {
-      if (processor.includes('Sapphire Rapids') || processor.includes('Emerald Rapids') || processor.includes('4th Gen') || processor.includes('5th Gen')) {
+      if (
+        processor.includes('Sapphire Rapids') ||
+        processor.includes('Emerald Rapids') ||
+        processor.includes('4th Gen') ||
+        processor.includes('5th Gen')
+      ) {
         cpuFrequencyGhz = 3.8;
-      } else if (processor.includes('Ice Lake') || processor.includes('3rd Gen') || processor.includes('Genoa') || processor.includes('Milan')) {
+      } else if (
+        processor.includes('Ice Lake') ||
+        processor.includes('3rd Gen') ||
+        processor.includes('Genoa') ||
+        processor.includes('Milan')
+      ) {
         cpuFrequencyGhz = 3.5;
-      } else if (processor.includes('Cascade Lake') || processor.includes('2nd Gen') || processor.includes('Rome')) {
+      } else if (
+        processor.includes('Cascade Lake') ||
+        processor.includes('2nd Gen') ||
+        processor.includes('Rome')
+      ) {
         cpuFrequencyGhz = 3.4;
       } else if (processor.includes('Skylake') || processor.includes('Broadwell')) {
         cpuFrequencyGhz = 3.1;
@@ -113,7 +131,10 @@ export function parseSeriesMarkdown(markdown: string, path: string): ParsedSerie
       if (
         !processor &&
         line.includes('processor') &&
-        (line.includes('Xeon') || line.includes('EPYC') || line.includes('Ampere') || line.includes('Cobalt'))
+        (line.includes('Xeon') ||
+          line.includes('EPYC') ||
+          line.includes('Ampere') ||
+          line.includes('Cobalt'))
       ) {
         if (line.includes('AMD EPYC')) {
           processor = 'AMD EPYC';

@@ -44,7 +44,9 @@ function formatNum(num: number, decimals: number): string {
  * Global backend calculation helper to resolve hourly/monthly costs,
  * min/max range bounds, and pre-formatted text representations.
  */
-export function calculateDetailedPricing(hourlyCost: number | null | undefined): DetailedPricingInfo {
+export function calculateDetailedPricing(
+  hourlyCost: number | null | undefined,
+): DetailedPricingInfo {
   if (hourlyCost === null || hourlyCost === undefined || Number(hourlyCost) <= 0) {
     return {
       hourlyCost: null,
@@ -89,4 +91,3 @@ export function calculateDetailedPricing(hourlyCost: number | null | undefined):
     formattedRange,
   };
 }
-

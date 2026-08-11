@@ -248,9 +248,10 @@ function resolveHourlyCost(inst: any, filters?: SearchInstancesQuery): number | 
   if (filters?.region) {
     const raw = filters.region.trim().toLowerCase();
     const clean = raw.replace(/\(\s*\)/g, '').trim();
-    const regionMatches = candidates.filter((m: any) =>
-      m.region?.code?.toLowerCase().includes(clean) ||
-      m.region?.name?.toLowerCase().includes(clean)
+    const regionMatches = candidates.filter(
+      (m: any) =>
+        m.region?.code?.toLowerCase().includes(clean) ||
+        m.region?.name?.toLowerCase().includes(clean),
     );
     if (regionMatches.length > 0) candidates = regionMatches;
   }
@@ -534,7 +535,10 @@ export async function getInstancesMetadata() {
   };
 
   for (const m of matrices) {
-    const slug = m.vmInstance?.service?.provider?.slug?.toLowerCase() || m.vmInstance?.service?.provider?.id?.toLowerCase() || '';
+    const slug =
+      m.vmInstance?.service?.provider?.slug?.toLowerCase() ||
+      m.vmInstance?.service?.provider?.id?.toLowerCase() ||
+      '';
 
     if (m.operatingSystem && !isInvalidOs(m.operatingSystem)) {
       allOsSet.add(m.operatingSystem);

@@ -5,9 +5,12 @@ export async function fetchGcpRegions(): Promise<GcpRawRegion[]> {
   try {
     const token = await getGcpAccessToken();
     const projectId = getGcpProjectId();
-    const res = await fetch(`https://compute.googleapis.com/compute/v1/projects/${projectId}/regions`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `https://compute.googleapis.com/compute/v1/projects/${projectId}/regions`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
 
     if (!res.ok) {
       throw new Error(`GCP Regions REST API error ${res.status}: ${await res.text()}`);
@@ -38,7 +41,8 @@ export async function fetchGcpMachineTypes(): Promise<GcpRawMachineType[]> {
     let pageToken: string | undefined;
 
     do {
-      const url: string = `https://compute.googleapis.com/compute/v1/projects/${projectId}/aggregated/machineTypes` +
+      const url: string =
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/aggregated/machineTypes` +
         (pageToken ? `?pageToken=${pageToken}` : '');
 
       const res = await fetch(url, {
@@ -100,7 +104,8 @@ export async function fetchGcpNodeTypes(): Promise<GcpRawMachineType[]> {
     let pageToken: string | undefined;
 
     do {
-      const url: string = `https://compute.googleapis.com/compute/v1/projects/${projectId}/aggregated/nodeTypes` +
+      const url: string =
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/aggregated/nodeTypes` +
         (pageToken ? `?pageToken=${pageToken}` : '');
 
       const res = await fetch(url, {
@@ -109,7 +114,9 @@ export async function fetchGcpNodeTypes(): Promise<GcpRawMachineType[]> {
 
       if (!res.ok) {
         // If nodeTypes API is disabled or inaccessible for the project, log gracefully and return empty array
-        console.warn(`GCP Node Types REST API returned status ${res.status}. Continuing without node types.`);
+        console.warn(
+          `GCP Node Types REST API returned status ${res.status}. Continuing without node types.`,
+        );
         return nodeTypes;
       }
 

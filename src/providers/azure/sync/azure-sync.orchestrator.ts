@@ -171,7 +171,9 @@ export async function syncAzure(): Promise<void> {
     const familyMap = await getInstanceFamilyMap('azure');
 
     // 5.5 Fetch & Parse Azure GitHub Documentation for Processor & Specs Enrichment
-    logger.info('Fetching & parsing Azure GitHub Documentation for specs & processor enrichment...');
+    logger.info(
+      'Fetching & parsing Azure GitHub Documentation for specs & processor enrichment...',
+    );
     const docSkuMap = new Map<
       string,
       {
@@ -303,7 +305,8 @@ export async function syncAzure(): Promise<void> {
               cpuFrequencyGhz: docSpec?.cpuFrequencyGhz || existingVm.cpuFrequencyGhz,
               storageSummary: docSpec?.storageSummary || existingVm.storageSummary,
               storageSizeGib: docSpec?.storageSizeGib ?? existingVm.storageSizeGib,
-              networkBandwidthGbps: docSpec?.networkBandwidthGbps || existingVm.networkBandwidthGbps,
+              networkBandwidthGbps:
+                docSpec?.networkBandwidthGbps || existingVm.networkBandwidthGbps,
             },
           });
         }
@@ -372,11 +375,19 @@ export async function syncAzure(): Promise<void> {
       let vmInstanceId = instanceMap.get(item.armSkuName);
       const regionId = regionMap.get(item.armRegionName);
 
-      if (!vmInstanceId && (item.serviceName === 'Azure Dedicated Host' || item.productName?.toLowerCase().includes('dedicated host'))) {
+      if (
+        !vmInstanceId &&
+        (item.serviceName === 'Azure Dedicated Host' ||
+          item.productName?.toLowerCase().includes('dedicated host'))
+      ) {
         const cleanSku = item.armSkuName ? item.armSkuName.split('-')[0].toLowerCase() : '';
         if (cleanSku) {
           for (const [instType, id] of instanceMap.entries()) {
-            const cleanInst = instType.replace('Standard_', '').replace('Basic_', '').split('_')[0].toLowerCase();
+            const cleanInst = instType
+              .replace('Standard_', '')
+              .replace('Basic_', '')
+              .split('_')[0]
+              .toLowerCase();
             if (cleanInst === cleanSku || instType.toLowerCase().includes(cleanSku)) {
               vmInstanceId = id;
               break;

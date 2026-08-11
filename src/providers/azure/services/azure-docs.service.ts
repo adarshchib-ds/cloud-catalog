@@ -93,7 +93,7 @@ export async function fetchRawMarkdown(path: string): Promise<string> {
               const includeText = await includeResponse.text();
               content = content.replace(match[0], `\n${includeText}\n`);
             }
-          } catch (e) {
+          } catch {
             // Ignore missing include files
           }
         }

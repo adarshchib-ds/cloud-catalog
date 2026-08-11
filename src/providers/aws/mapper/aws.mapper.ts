@@ -142,7 +142,10 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
   const cpuFrequencyGhz = raw.ProcessorInfo.SustainedClockSpeedInGhz ?? null;
 
   // Extract numeric generation and currentGeneration boolean
-  const { generation, currentGeneration } = parseAwsGeneration(raw.InstanceType, raw.CurrentGeneration);
+  const { generation, currentGeneration } = parseAwsGeneration(
+    raw.InstanceType,
+    raw.CurrentGeneration,
+  );
 
   return {
     instanceType: raw.InstanceType,
@@ -170,8 +173,7 @@ export function mapVmInstance(raw: AwsRawInstanceType): NormalizedVmInstanceDTO 
     storageSizeGib,
     supportsLiveMigration: false, // Explicitly represents AWS EC2 reboot/stop-start host maintenance model
     supportsNestedVirtualization:
-      raw.InstanceType.endsWith('.metal') ||
-      generation !== null && generation >= 5, // All Nitro hypervisor instances support hardware-assisted virtualization extensions
+      raw.InstanceType.endsWith('.metal') || (generation !== null && generation >= 5), // All Nitro hypervisor instances support hardware-assisted virtualization extensions
   };
 }
 
@@ -182,7 +184,23 @@ export function parseAwsGeneration(
   const family = instanceType.split('.')[0]?.toLowerCase() || '';
 
   // Previous generation families explicitly listed by AWS (fallback list)
-  const legacyFamilies = ['t1', 'm1', 'c1', 'm2', 'cr1', 'cg1', 'hs1', 'cc1', 'cc2', 'g2', 'i2', 'r3', 'm3', 'c3', 't2'];
+  const legacyFamilies = [
+    't1',
+    'm1',
+    'c1',
+    'm2',
+    'cr1',
+    'cg1',
+    'hs1',
+    'cc1',
+    'cc2',
+    'g2',
+    'i2',
+    'r3',
+    'm3',
+    'c3',
+    't2',
+  ];
   const isLegacy = legacyFamilies.includes(family);
 
   // Extract numeric generation from family string (e.g. t1 -> 1, m5 -> 5, c6i -> 6, m7i -> 7, u7i -> 7)
@@ -193,7 +211,8 @@ export function parseAwsGeneration(
   }
 
   // Prioritize native AWS SDK CurrentGeneration boolean flag if present
-  const currentGeneration = typeof rawCurrentGeneration === 'boolean' ? rawCurrentGeneration : !isLegacy;
+  const currentGeneration =
+    typeof rawCurrentGeneration === 'boolean' ? rawCurrentGeneration : !isLegacy;
 
   return {
     generation,

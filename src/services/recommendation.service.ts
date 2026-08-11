@@ -1,7 +1,12 @@
 import { prisma as db } from '@config/database';
 import { SmartRecommendationBody } from '@validators/instance.validator';
 import { calculatePriceRange } from '@utils/pricing';
-import { parseInstanceMeta, calculateScore, normalizeOperatingSystem, normalizeRegionForProvider } from '@utils/recommendation-utils';
+import {
+  parseInstanceMeta,
+  calculateScore,
+  normalizeOperatingSystem,
+  normalizeRegionForProvider,
+} from '@utils/recommendation-utils';
 import { resolveOperatingSystemCandidates } from '@utils/os-resolver';
 import {
   mapToRecommendationResponseDto,
@@ -18,7 +23,7 @@ export async function getSmartRecommendations(
   // ── 1. Dynamic Baseline Provider Selection ────────────────────────────────
   // Determine eligible providers that satisfy the capability matrix filters
   const matrixFilter: any = { isActive: true, isRegionAvailable: true };
-  
+
   const validTenancyValues = ['SHARED', 'DEDICATED_INSTANCE', 'DEDICATED_HOST', 'SOLE_TENANT'];
   if (tenancy) {
     if (!validTenancyValues.includes(tenancy)) {
@@ -47,7 +52,7 @@ export async function getSmartRecommendations(
       ]),
     );
     matrixFilter.region = {
-      OR: allowedRegions.map((r) => ({ code: { contains: r, mode: 'insensitive' } })),
+      OR: allowedRegions.map(r => ({ code: { contains: r, mode: 'insensitive' } })),
       isActive: true,
     };
   }
@@ -74,10 +79,11 @@ export async function getSmartRecommendations(
   // Default priority order: GCP if SOLE_TENANT requested, else AWS -> Azure -> GCP
   const baselineProvider =
     tenancy === 'SOLE_TENANT'
-      ? matchingProviders.find((p) => p.slug.includes('gcp') || p.id === 'gcp') || matchingProviders[0]
-      : matchingProviders.find((p) => p.slug === 'amazon-web-services' || p.id === 'aws') ||
-        matchingProviders.find((p) => p.slug.includes('azure') || p.id === 'azure') ||
-        matchingProviders.find((p) => p.slug.includes('gcp') || p.id === 'gcp') ||
+      ? matchingProviders.find(p => p.slug.includes('gcp') || p.id === 'gcp') ||
+        matchingProviders[0]
+      : matchingProviders.find(p => p.slug === 'amazon-web-services' || p.id === 'aws') ||
+        matchingProviders.find(p => p.slug.includes('azure') || p.id === 'azure') ||
+        matchingProviders.find(p => p.slug.includes('gcp') || p.id === 'gcp') ||
         matchingProviders[0];
 
   if (!baselineProvider) {
@@ -119,7 +125,7 @@ export async function getSmartRecommendations(
         const rCode = m.region?.code?.toLowerCase() || '';
         const providerSlug = inst.service?.provider?.slug || inst.service?.providerId || 'aws';
         const allowedRegions = normalizeRegionForProvider(providerSlug, region);
-        if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) return false;
+        if (!allowedRegions.some(ar => rCode.includes(ar.toLowerCase()))) return false;
       }
       if (tenancy && m.tenancy !== tenancy) return false;
 
@@ -133,7 +139,7 @@ export async function getSmartRecommendations(
           const rCode = m.region?.code?.toLowerCase() || '';
           const providerSlug = inst.service?.provider?.slug || inst.service?.providerId || 'aws';
           const allowedRegions = normalizeRegionForProvider(providerSlug, region);
-          if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) return false;
+          if (!allowedRegions.some(ar => rCode.includes(ar.toLowerCase()))) return false;
         }
         return true;
       });
@@ -152,7 +158,6 @@ export async function getSmartRecommendations(
     return calculatePriceRange(baseCost);
   };
 
-
   const capabilityInclude = {
     service: { include: { provider: true } },
     instanceFamily: true,
@@ -165,7 +170,10 @@ export async function getSmartRecommendations(
         ...(region
           ? {
               region: {
-                OR: normalizeRegionForProvider(baselineProvider.slug || baselineProvider.id || 'aws', region).map((r) => ({
+                OR: normalizeRegionForProvider(
+                  baselineProvider.slug || baselineProvider.id || 'aws',
+                  region,
+                ).map(r => ({
                   code: { contains: r, mode: 'insensitive' },
                 })),
               },
@@ -195,7 +203,8 @@ export async function getSmartRecommendations(
   // Filter to only instances with valid pricing — prevents $0 baseline cards
   // when newer AWS/Azure instances haven't had pricing fetched from the API yet
   const pricedBaselineInstances = baselineInstances.filter(inst => getHourlyCost(inst) > 0);
-  const effectiveBaseline = pricedBaselineInstances.length > 0 ? pricedBaselineInstances : baselineInstances;
+  const effectiveBaseline =
+    pricedBaselineInstances.length > 0 ? pricedBaselineInstances : baselineInstances;
   effectiveBaseline.sort((a, b) => getHourlyCost(a) - getHourlyCost(b));
 
   const familyFreq = new Map<string, { name: string; count: number }>();
@@ -233,7 +242,9 @@ export async function getSmartRecommendations(
   // ── 5. Fetch cross-cloud candidates for comparison ─────────────────────────
 
   const targetVcpus = reqVcpu ? [reqVcpu] : [...new Set(effectiveBaseline.map(b => b.vcpu))];
-  const targetMemories = reqMemoryGib ? [reqMemoryGib] : [...new Set(effectiveBaseline.map(b => b.memoryGib))];
+  const targetMemories = reqMemoryGib
+    ? [reqMemoryGib]
+    : [...new Set(effectiveBaseline.map(b => b.memoryGib))];
   const targetGpu = [...new Set(effectiveBaseline.map(b => b.hasGpu))];
 
   const candidateRegionFilter = region
@@ -245,52 +256,55 @@ export async function getSmartRecommendations(
               ...normalizeRegionForProvider('azure', region),
               ...normalizeRegionForProvider('gcp', region),
             ]),
-          ).map((r) => ({ code: { contains: r, mode: 'insensitive' as const } })),
+          ).map(r => ({ code: { contains: r, mode: 'insensitive' as const } })),
         },
       }
     : {};
 
-  const crossCloudCandidates = effectiveBaseline.length === 0 ? [] : ((await db.vmInstance.findMany({
-    where: {
-      service: { providerId: { in: otherProviderIds }, isActive: true },
-      vcpu: { in: targetVcpus },
-      memoryGib: { in: targetMemories },
-      ...(targetGpu.length === 1 ? { hasGpu: targetGpu[0] } : {}),
-      vmCapabilityMatrix: {
-        some: {
-          isActive: true,
-          isRegionAvailable: true,
-          ...(tenancy ? { tenancy } : {}),
-          ...candidateRegionFilter,
-        },
-      },
-    },
-    take: 100,
-    include: {
-      service: { include: { provider: true } },
-      instanceFamily: true,
-      vmCapabilityMatrix: {
-        where: {
-          isActive: true,
-          isRegionAvailable: true,
-          ...(tenancy ? { tenancy } : {}),
-          ...candidateRegionFilter,
-        },
-        take: 20,
-        include: {
-          region: true,
-          pricings: {
-            where: { pricingType: targetType },
+  const crossCloudCandidates =
+    effectiveBaseline.length === 0
+      ? []
+      : ((await db.vmInstance.findMany({
+          where: {
+            service: { providerId: { in: otherProviderIds }, isActive: true },
+            vcpu: { in: targetVcpus },
+            memoryGib: { in: targetMemories },
+            ...(targetGpu.length === 1 ? { hasGpu: targetGpu[0] } : {}),
+            vmCapabilityMatrix: {
+              some: {
+                isActive: true,
+                isRegionAvailable: true,
+                ...(tenancy ? { tenancy } : {}),
+                ...candidateRegionFilter,
+              },
+            },
           },
-        },
-      },
-    },
-  })) as any[]);
+          take: 100,
+          include: {
+            service: { include: { provider: true } },
+            instanceFamily: true,
+            vmCapabilityMatrix: {
+              where: {
+                isActive: true,
+                isRegionAvailable: true,
+                ...(tenancy ? { tenancy } : {}),
+                ...candidateRegionFilter,
+              },
+              take: 20,
+              include: {
+                region: true,
+                pricings: {
+                  where: { pricingType: targetType },
+                },
+              },
+            },
+          },
+        })) as any[]);
 
   // Helper function to find best cross-cloud equivalent using 4-Tier Progressive Candidate Selection
   const findBestEquivalent = (candInst: any, targetProviderSlug: string) => {
     const baseMeta = parseInstanceMeta(candInst);
-    
+
     // Filter cross-cloud candidates by target provider
     const providerCandidates = crossCloudCandidates.filter((item: any) => {
       const slug = item.service?.provider?.slug?.toLowerCase() || '';
@@ -318,14 +332,16 @@ export async function getSmartRecommendations(
     ) => {
       const matrices = c.vmCapabilityMatrix || [];
       const providerSlug = c.service?.provider?.slug || c.service?.providerId || targetProviderSlug;
-      const allowedRegions = targetRegion ? normalizeRegionForProvider(providerSlug, targetRegion) : [];
+      const allowedRegions = targetRegion
+        ? normalizeRegionForProvider(providerSlug, targetRegion)
+        : [];
 
       const matchingMatrix = matrices.find((m: any) => {
         if (targetOs && m.operatingSystem !== targetOs) return false;
         if (targetTenancy && m.tenancy !== targetTenancy) return false;
         if (targetRegion) {
           const rCode = m.region?.code?.toLowerCase() || '';
-          if (!allowedRegions.some((ar) => rCode.includes(ar.toLowerCase()))) {
+          if (!allowedRegions.some(ar => rCode.includes(ar.toLowerCase()))) {
             return false;
           }
         }
@@ -385,8 +401,8 @@ export async function getSmartRecommendations(
     let fallbackReason: string | undefined = undefined;
 
     // ── TIER 1: EXACT MATCH ──────────────────────────────────────────────────
-    let tier1Evaluations = providerCandidates
-      .map((c) => evaluateCandidate(c, requestedOs, requestedTenancy, requestedRegion))
+    const tier1Evaluations = providerCandidates
+      .map(c => evaluateCandidate(c, requestedOs, requestedTenancy, requestedRegion))
       .filter((res): res is NonNullable<typeof res> => res !== null);
 
     if (tier1Evaluations.length > 0) {
@@ -396,13 +412,25 @@ export async function getSmartRecommendations(
     }
 
     // ── TIER 2: OS NORMALIZATION (Azure & GCP Open-Source Distro -> LINUX) ───
-    const isCommercialOs = ['WINDOWS', 'WINDOWS_SQL_SERVER', 'RED_HAT', 'RHEL_SAP', 'SUSE', 'SLES_SAP'].includes(requestedOs || '');
-    if (!winnerResult && requestedOs && !isCommercialOs && (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')) {
+    const isCommercialOs = [
+      'WINDOWS',
+      'WINDOWS_SQL_SERVER',
+      'RED_HAT',
+      'RHEL_SAP',
+      'SUSE',
+      'SLES_SAP',
+    ].includes(requestedOs || '');
+    if (
+      !winnerResult &&
+      requestedOs &&
+      !isCommercialOs &&
+      (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp')
+    ) {
       const normalizedOs = normalizeOperatingSystem(targetProviderSlug, requestedOs);
 
       if (normalizedOs === 'LINUX' && requestedOs !== 'LINUX') {
-        let tier2Evaluations = providerCandidates
-          .map((c) => evaluateCandidate(c, 'LINUX', requestedTenancy, requestedRegion))
+        const tier2Evaluations = providerCandidates
+          .map(c => evaluateCandidate(c, 'LINUX', requestedTenancy, requestedRegion))
           .filter((res): res is NonNullable<typeof res> => res !== null);
 
         if (tier2Evaluations.length > 0) {
@@ -417,9 +445,9 @@ export async function getSmartRecommendations(
     // ── TIER 3: TENANCY FALLBACK ─────────────────────────────────────────────
     if (!winnerResult && requestedTenancy) {
       const activeOsFilter = requestedOs
-        ? ((targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
-          ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs)
-          : requestedOs)
+        ? (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
+          ? normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs
+          : requestedOs
         : undefined;
 
       const tenancyOrder = ['DEDICATED_HOST', 'DEDICATED_INSTANCE', 'SHARED'];
@@ -427,8 +455,8 @@ export async function getSmartRecommendations(
       const fallbackTenancies = startIndex >= 0 ? tenancyOrder.slice(startIndex + 1) : ['SHARED'];
 
       for (const fallbackTen of fallbackTenancies) {
-        let tier3Evaluations = providerCandidates
-          .map((c) => evaluateCandidate(c, activeOsFilter, fallbackTen, requestedRegion))
+        const tier3Evaluations = providerCandidates
+          .map(c => evaluateCandidate(c, activeOsFilter, fallbackTen, requestedRegion))
           .filter((res): res is NonNullable<typeof res> => res !== null);
 
         if (tier3Evaluations.length > 0) {
@@ -445,14 +473,14 @@ export async function getSmartRecommendations(
     // ── TIER 4: REGION FALLBACK ──────────────────────────────────────────────
     if (!winnerResult) {
       const activeOsFilter = requestedOs
-        ? ((targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
-          ? (normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs)
-          : requestedOs)
+        ? (targetProviderSlug === 'azure' || targetProviderSlug === 'gcp') && !isCommercialOs
+          ? normalizeOperatingSystem(targetProviderSlug, requestedOs) || requestedOs
+          : requestedOs
         : undefined;
       const activeTenancyFilter = matchedTen || requestedTenancy;
 
-      let tier4Evaluations = providerCandidates
-        .map((c) => evaluateCandidate(c, activeOsFilter, activeTenancyFilter, undefined))
+      const tier4Evaluations = providerCandidates
+        .map(c => evaluateCandidate(c, activeOsFilter, activeTenancyFilter, undefined))
         .filter((res): res is NonNullable<typeof res> => res !== null);
 
       if (tier4Evaluations.length > 0) {
@@ -513,5 +541,4 @@ export async function getSmartRecommendations(
     findBestEquivalent,
     findLatestGenerationEquivalent,
   );
-
 }

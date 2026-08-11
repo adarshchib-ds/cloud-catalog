@@ -1,7 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../../../config/database';
 import { logger } from '../../../config/logger';
-import { fetchGcpRegions, fetchGcpMachineTypes, fetchGcpNodeTypes } from '../services/gcp-compute.service';
+import {
+  fetchGcpRegions,
+  fetchGcpMachineTypes,
+  fetchGcpNodeTypes,
+} from '../services/gcp-compute.service';
 import {
   resolveComputeEngineServiceId,
   fetchGcpComputeSkus,
@@ -233,7 +237,9 @@ export async function syncGcp(): Promise<void> {
           for (const usageType of USAGE_TYPES.slice(1)) {
             const composed = composeHourlyCost(machineType, regionCode, usageType, skuIndex);
             if (composed == null) {
-              logger.debug(`Official GCP SKU for ${usageType} unavailable for ${machineType.name} in ${regionCode}. Skipping.`);
+              logger.debug(
+                `Official GCP SKU for ${usageType} unavailable for ${machineType.name} in ${regionCode}. Skipping.`,
+              );
               skippedPricing++;
               continue;
             }
@@ -274,11 +280,13 @@ export async function syncGcp(): Promise<void> {
     }
 
     if (pricingToCreate.length > 0) {
-      logger.info(`Bulk upserting ${pricingToCreate.length} GCP Pricing records via PostgreSQL ON CONFLICT DO UPDATE...`);
+      logger.info(
+        `Bulk upserting ${pricingToCreate.length} GCP Pricing records via PostgreSQL ON CONFLICT DO UPDATE...`,
+      );
       const chunkSize = 1000;
       for (let i = 0; i < pricingToCreate.length; i += chunkSize) {
         const chunk = pricingToCreate.slice(i, i + chunkSize);
-        
+
         // Construct parametrized values SQL string for bulk ON CONFLICT DO UPDATE
         const valueStrings: string[] = [];
         const params: any[] = [];
@@ -286,7 +294,7 @@ export async function syncGcp(): Promise<void> {
 
         for (const p of chunk) {
           valueStrings.push(
-            `($${paramIdx}, $${paramIdx + 1}, CAST($${paramIdx + 2}::text AS "public"."PricingType"), $${paramIdx + 3}, NOW(), NOW())`
+            `($${paramIdx}, $${paramIdx + 1}, CAST($${paramIdx + 2}::text AS "public"."PricingType"), $${paramIdx + 3}, NOW(), NOW())`,
           );
           params.push(p.id, p.capabilityMatrixId, p.pricingType, p.hourlyCost);
           paramIdx += 4;

@@ -10,7 +10,9 @@ class SyncLockService {
   public acquireLock(provider: string): boolean {
     const lockKey = provider.toLowerCase();
     if (this.activeLocks.has(lockKey)) {
-      logger.warn(`[SYNC LOCK] Concurrent sync blocked: Process for '${provider}' is already active.`);
+      logger.warn(
+        `[SYNC LOCK] Concurrent sync blocked: Process for '${provider}' is already active.`,
+      );
       return false;
     }
     this.activeLocks.add(lockKey);
