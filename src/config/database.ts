@@ -12,11 +12,11 @@ export const prisma: PrismaClient =
     log:
       process.env.NODE_ENV === 'development'
         ? [
-            { emit: 'event', level: 'query' },
-            { emit: 'stdout', level: 'error' },
-            { emit: 'stdout', level: 'info' },
-            { emit: 'stdout', level: 'warn' },
-          ]
+          { emit: 'event', level: 'query' },
+          { emit: 'stdout', level: 'error' },
+          { emit: 'stdout', level: 'info' },
+          { emit: 'stdout', level: 'warn' },
+        ]
         : undefined,
   });
 
