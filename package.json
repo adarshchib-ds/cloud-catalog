@@ -47,12 +47,16 @@
     "pnpm": ">=9.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-account": "^3.1108.0",
+    "@aws-sdk/client-cost-explorer": "^3.1108.0",
     "@aws-sdk/client-ec2": "^3.1083.0",
+    "@aws-sdk/client-organizations": "^3.1110.0",
     "@aws-sdk/client-pricing": "^3.1083.0",
-    "@google-cloud/compute": "^6.13.0",
+    "@aws-sdk/client-sts": "^3.1108.0",
     "@azure/arm-compute": "^24.1.0",
     "@azure/arm-subscriptions": "^6.0.0",
     "@azure/identity": "^4.13.1",
+    "@google-cloud/compute": "^6.13.0",
     "@prisma/client": "^5.17.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

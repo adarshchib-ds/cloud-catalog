@@ -166,9 +166,13 @@ function switchTab(t) {
   document.getElementById('tab-dict').classList.toggle('active', t === 'dict');
   document.getElementById('tab-calc').classList.toggle('active', t === 'calc');
   document.getElementById('tab-recommend').classList.toggle('active', t === 'recommend');
+  if (document.getElementById('tab-billing')) document.getElementById('tab-billing').classList.toggle('active', t === 'billing');
+
   document.getElementById('panel-dict').classList.toggle('active', t === 'dict');
   document.getElementById('panel-calc').classList.toggle('active', t === 'calc');
   document.getElementById('panel-recommend').classList.toggle('active', t === 'recommend');
+  if (document.getElementById('panel-billing')) document.getElementById('panel-billing').classList.toggle('active', t === 'billing');
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (t === 'recommend' && !recRegionsLoaded) loadRecRegions();
   saveState();
@@ -1412,4 +1416,399 @@ function closeModal() {
   document.getElementById('details-modal').classList.remove('open');
 }
 
+// ═════════════════════════════════════════════════════════════════════
+// BILLING MANAGEMENT & MULTI-CLOUD INVOICE FETCHING
+// ═════════════════════════════════════════════════════════════════════
+
+const PROVIDER_CONFIG = {
+  aws: {
+    name: 'Amazon Web Services',
+    shortName: 'AWS',
+    badgeClass: 'provider-badge-aws',
+    serviceProvider: {
+      name: 'Amazon Web Services LLC',
+      address: '410 Terry Avenue North, Seattle WA 98109-5210'
+    },
+    labels: {
+      accountId: 'AWS Account ID (Optional)',
+      accountIdPlaceholder: '12-digit AWS Account ID (e.g. 582983022238)',
+      accessKeyId: 'AWS Access Key ID (Optional)',
+      secretAccessKey: 'AWS Secret Access Key (Optional)',
+      region: 'Target Region'
+    }
+  },
+  azure: {
+    name: 'Microsoft Azure',
+    shortName: 'Azure',
+    badgeClass: 'provider-badge-azure',
+    serviceProvider: {
+      name: 'Microsoft Corporation (Azure Billing)',
+      address: 'One Microsoft Way, Redmond WA 98052-6399'
+    },
+    labels: {
+      accountId: 'Azure Subscription ID (Optional)',
+      accountIdPlaceholder: 'Azure Subscription GUID',
+      accessKeyId: 'Azure Client ID (Optional)',
+      secretAccessKey: 'Azure Client Secret (Optional)',
+      region: 'Tenant ID / Region'
+    }
+  },
+  gcp: {
+    name: 'Google Cloud Platform',
+    shortName: 'GCP',
+    badgeClass: 'provider-badge-gcp',
+    serviceProvider: {
+      name: 'Google LLC (Google Cloud)',
+      address: '1600 Amphitheatre Parkway, Mountain View CA 94043'
+    },
+    labels: {
+      accountId: 'GCP Project ID (Optional)',
+      accountIdPlaceholder: 'e.g. project-fa402b51',
+      accessKeyId: 'Client Email / Service Account (Optional)',
+      secretAccessKey: 'Private Key (Optional)',
+      region: 'Target Region'
+    }
+  }
+};
+
+function onBillingProviderChange() {
+  const providerKey = document.getElementById('billing-provider').value;
+  const config = PROVIDER_CONFIG[providerKey] || PROVIDER_CONFIG.aws;
+
+  const lblAccountId = document.getElementById('label-billing-account-id');
+  const inputAccountId = document.getElementById('billing-account-id');
+  const lblAccessKey = document.getElementById('label-billing-access-key');
+  const inputAccessKey = document.getElementById('billing-access-key');
+  const lblSecretKey = document.getElementById('label-billing-secret-key');
+  const inputSecretKey = document.getElementById('billing-secret-key');
+  const groupAccessKey = inputAccessKey ? inputAccessKey.closest('.form-group') : null;
+  const groupSecretKey = inputSecretKey ? inputSecretKey.closest('.form-group') : null;
+  const lblRegion = document.getElementById('label-billing-region');
+
+  if (lblAccountId) lblAccountId.innerText = config.labels.accountId;
+  if (inputAccountId) inputAccountId.placeholder = config.labels.accountIdPlaceholder;
+  if (lblAccessKey) lblAccessKey.innerText = config.labels.accessKeyId;
+  if (lblSecretKey) lblSecretKey.innerText = config.labels.secretAccessKey;
+  if (lblRegion) lblRegion.innerText = config.labels.region;
+
+  // Show/Hide Access Key fields dynamically based on provider
+  if (providerKey === 'aws') {
+    if (groupAccessKey) groupAccessKey.style.display = 'block';
+    if (groupSecretKey) groupSecretKey.style.display = 'block';
+    if (inputAccessKey) inputAccessKey.placeholder = 'Optional (or leave blank for 1-Click Connect)';
+    if (inputSecretKey) inputSecretKey.placeholder = 'Optional (or leave blank for 1-Click Connect)';
+  } else if (providerKey === 'azure') {
+    if (groupAccessKey) groupAccessKey.style.display = 'block';
+    if (groupSecretKey) groupSecretKey.style.display = 'block';
+    if (inputAccessKey) inputAccessKey.placeholder = 'Azure Client ID / Tenant ID';
+    if (inputSecretKey) inputSecretKey.placeholder = 'Azure Client Secret';
+  } else if (providerKey === 'gcp') {
+    if (groupAccessKey) groupAccessKey.style.display = 'block';
+    if (groupSecretKey) groupSecretKey.style.display = 'block';
+    if (inputAccessKey) inputAccessKey.placeholder = 'Service Account Email';
+    if (inputSecretKey) inputSecretKey.placeholder = 'Private Key Path / Credential JSON';
+  }
+}
+
+function clearBillingForm() {
+  if (document.getElementById('billing-account-id')) document.getElementById('billing-account-id').value = '';
+  document.getElementById('billing-access-key').value = '';
+  document.getElementById('billing-secret-key').value = '';
+  document.getElementById('billing-region').value = 'us-east-1';
+  document.getElementById('billing-results').innerHTML = `
+    <div class="results-empty">
+      <h3>No Billing Data Loaded</h3>
+      <p>Click "Fetch Billing Statement" above to pull live invoice and service cost data.</p>
+    </div>
+  `;
+}
+
+async function fetchAwsBillingData() {
+  const provider = document.getElementById('billing-provider').value;
+  const accountId = document.getElementById('billing-account-id') ? document.getElementById('billing-account-id').value.trim() : '';
+  const accessKeyId = document.getElementById('billing-access-key').value.trim();
+  const secretAccessKey = document.getElementById('billing-secret-key').value.trim();
+  const region = document.getElementById('billing-region').value;
+
+  const resultsContainer = document.getElementById('billing-results');
+  const btn = document.getElementById('btn-billing-fetch');
+
+  btn.disabled = true;
+  btn.innerHTML = `<div class="loading-spinner" style="width:16px;height:16px;display:inline-block;margin-right:8px;"></div> Fetching Live ${provider.toUpperCase()} Invoice...`;
+
+  resultsContainer.innerHTML = `
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      <p>Connecting to ${provider.toUpperCase()} Billing & Cost APIs...</p>
+    </div>
+  `;
+
+  try {
+    // If user selected AWS and entered a 12-digit Account ID WITHOUT custom access keys, route straight to 1-Click CloudFormation Connect
+    if (provider === 'aws' && /^\d{12}$/.test(accountId) && !accessKeyId && !secretAccessKey) {
+      renderCloudFormationConnectCard(accountId);
+      return;
+    }
+
+    const payload = {};
+    if (accountId) payload.accountId = accountId;
+    if (accessKeyId) {
+      if (!payload.accountId && /^\d{12}$/.test(accessKeyId)) {
+        payload.accountId = accessKeyId;
+      } else {
+        payload.accessKeyId = accessKeyId;
+      }
+    }
+    if (secretAccessKey) payload.secretAccessKey = secretAccessKey;
+    if (region) payload.region = region;
+
+    // Determine backend API endpoint according to selected cloud provider
+    let endpoint = `${BACKEND_URL}/api/v1/${provider}/account-billing`;
+    
+    // Check if provider route exists
+    if (provider !== 'aws') {
+      resultsContainer.innerHTML = `
+        <div class="results-empty" style="border-color: rgba(234, 179, 8, 0.3);">
+          <h3 style="color: #eab308;">${provider.toUpperCase()} Billing Integration In Progress</h3>
+          <p>Real-time billing statement ingestion for <strong>${provider.toUpperCase()}</strong> is currently under development. Please select <strong>AWS (Amazon Web Services)</strong> to test live billing features.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await res.json();
+
+    if (!result.success || !result.data) {
+      // If error occurs and provider is AWS, check if user provided a 12-digit account ID to offer 1-Click CloudFormation Connect
+      if (provider === 'aws' && /^\d{12}$/.test(accountId)) {
+        renderCloudFormationConnectCard(accountId, result.error?.message);
+        return;
+      }
+      throw new Error(result.error?.message || `Failed to fetch billing data from ${provider.toUpperCase()} Cost Explorer`);
+    }
+
+    const b = result.data;
+    renderCloudCatalogInvoiceCard(b, provider);
+
+  } catch (err) {
+    if (provider === 'aws' && /^\d{12}$/.test(accountId)) {
+      renderCloudFormationConnectCard(accountId, err.message);
+    } else {
+      resultsContainer.innerHTML = `
+        <div class="results-empty" style="border-color: rgba(239, 68, 68, 0.3);">
+          <h3 style="color: var(--red);">Error Fetching ${provider.toUpperCase()} Billing Statement</h3>
+          <p>${esc(err.message)}</p>
+        </div>
+      `;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Fetch Billing Statement &#8594;';
+  }
+}
+
+async function renderCloudFormationConnectCard(awsAccountId, errorMsg) {
+  const container = document.getElementById('billing-results');
+  container.innerHTML = `
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      <p>Generating 1-Click CloudFormation Launch Link for Account ${esc(awsAccountId)}...</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/aws/generate-connect-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aws_account_id: awsAccountId })
+    });
+    const result = await res.json();
+
+    if (!result.success || !result.data) {
+      throw new Error(result.error?.message || 'Failed to generate CloudFormation connect link');
+    }
+
+    const linkData = result.data;
+    container.innerHTML = `
+      <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 24px; color: #f8fafc; font-family: sans-serif;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+          <h3 style="margin: 0; color: #818cf8; font-size: 1.25rem;">🚀 Connect AWS Account ${esc(awsAccountId)}</h3>
+          <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;">
+            Zero Secrets • Read-Only IAM • $0 Customer Cost
+          </span>
+        </div>
+        
+        <p style="color: #94a3b8; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
+          ${errorMsg ? `<strong style="color: #f87171;">Note:</strong> ${esc(errorMsg)}<br>` : ''}
+          To grant Cloud Catalog secure, read-only access to ingest billing & owner profile data for account <strong>${esc(awsAccountId)}</strong>, click the 1-Click Stack button below to create a free IAM role in your AWS Console.
+        </p>
+
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;">
+          <a href="${esc(linkData.quick_create_url)}" target="_blank" rel="noopener" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
+            <span>🚀 Launch 1-Click AWS Stack</span> &#8599;
+          </a>
+          <button onclick="verifyAndFetchAssumedRoleBilling('${esc(awsAccountId)}')" style="background: #1e293b; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+            🔄 Verify & Fetch Billing Data
+          </button>
+        </div>
+
+        <div style="font-size: 0.8rem; color: #64748b; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px;">
+          🔒 <strong>Security Guarantee:</strong> Cloud Catalog uses AWS STS ExternalId (<code>${esc(linkData.external_id)}</code>) to prevent confused deputy attacks. Your static credentials are never shared or stored.
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `
+      <div class="results-empty" style="border-color: rgba(239, 68, 68, 0.3);">
+        <h3 style="color: var(--red);">CloudFormation Connect Error</h3>
+        <p>${esc(err.message)}</p>
+      </div>
+    `;
+  }
+}
+
+async function verifyAndFetchAssumedRoleBilling(awsAccountId) {
+  const container = document.getElementById('billing-results');
+  container.innerHTML = `
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      <p>Verifying IAM Cross-Account Role & Ingesting Billing Data for Account ${esc(awsAccountId)}...</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/aws/fetch-billing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aws_account_id: awsAccountId, force_refresh: false })
+    });
+    const result = await res.json();
+
+    if (!result.success || !result.data) {
+      throw new Error(result.error?.message || 'AccessDenied: CloudFormation stack creation is still in progress in AWS');
+    }
+
+    const payload = result.data;
+    renderCloudCatalogInvoiceCard(payload.billing, 'aws');
+  } catch (err) {
+    renderCloudFormationConnectCard(awsAccountId, err.message);
+  }
+}
+
+function renderCloudCatalogInvoiceCard(b, providerKey) {
+  const container = document.getElementById('billing-results');
+  const providerConfig = PROVIDER_CONFIG[providerKey] || PROVIDER_CONFIG.aws;
+
+  const rowsHtml = (b.servicesBreakdownTable || []).map(s => `
+    <tr>
+      <td style="padding: 7px 12px;">${esc(s.serviceName)}</td>
+      <td style="text-align: right; padding: 7px 12px; font-weight: bold;">${esc(s.amountDueFormatted)}</td>
+    </tr>
+  `).join('');
+
+  const invoiceNo = `INV-${b.invoiceHeader.accountID.slice(-6)}-${b.invoiceHeader.statementDate.replace(/-/g, '')}`;
+
+  const html = `
+    <div class="cc-invoice-card">
+      <!-- Top Cloud Catalog Header -->
+      <div class="cc-invoice-header">
+        <div class="cc-brand-container">
+          <div class="cc-brand-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19.5H19a3 3 0 0 0 3-3 3 3 0 0 0-3-3c-.1 0-.2 0-.3.02C18.2 10.4 15.3 8 12 8c-3.1 0-5.8 2.1-6.6 5.1C5.1 13.04 4.6 13 4 13a4 4 0 0 0-4 4 4 4 0 0 0 4 4h13.5z"></path></svg>
+          </div>
+          <div>
+            <div class="cc-brand-title">Cloud Catalog</div>
+            <div class="cc-brand-subtitle">Unified Multi-Cloud Billing & Cost Management</div>
+          </div>
+        </div>
+        <div class="provider-badge ${providerConfig.badgeClass}">
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:currentColor;"></span>
+          ${providerConfig.name}
+        </div>
+      </div>
+
+      <!-- Formal Greeting & Summary Box from Cloud Catalog -->
+      <div class="cc-greeting-box">
+        <h4>Greetings from Cloud Catalog,</h4>
+        <p>We're writing to provide you with a consolidated electronic invoice statement for your use of <strong>${providerConfig.name}</strong> services. Your account will be charged <strong>${esc(b.summary.totalDueFormatted)}</strong>. Additional information regarding your bill, individual service charge details, and your account history are available on the Account Summary Page.</p>
+      </div>
+
+      <!-- Account Summary Header Table -->
+      <table class="aws-table">
+        <thead>
+          <tr>
+            <th>Account / Subscription ID</th>
+            <th>Invoice No</th>
+            <th>Statement Date</th>
+            <th>Payment Due Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>${esc(b.invoiceHeader.accountID)}</strong></td>
+            <td>${esc(invoiceNo)}</td>
+            <td>${esc(b.invoiceHeader.statementDate)}</td>
+            <td>${esc(b.invoiceHeader.statementDate)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Bill To & Service Provider Info Columns -->
+      <div class="aws-two-col">
+        <div class="aws-info-block">
+          <div class="aws-info-block-title">Bill To</div>
+          <div><strong>Attn: ${esc(b.billTo.name)}</strong></div>
+          <div>${esc(b.billTo.addressLine1)}</div>
+          <div>${esc(b.billTo.cityStateZip)}</div>
+          <div>${esc(b.billTo.country)}</div>
+        </div>
+        <div class="aws-info-block">
+          <div class="aws-info-block-title">Service Provider</div>
+          <div><strong>${esc(providerConfig.serviceProvider.name)}</strong></div>
+          <div>${esc(providerConfig.serviceProvider.address)}</div>
+        </div>
+      </div>
+
+      <!-- Service Breakdown Invoice Table -->
+      <table class="aws-table">
+        <thead>
+          <tr class="aws-table-header-row">
+            <td colspan="2">Billing Period: ${esc(b.invoiceHeader.billingPeriod)} (${providerConfig.shortName})</td>
+          </tr>
+          <tr>
+            <th>Service Name</th>
+            <th style="text-align: right;">Amount Due</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+          <tr>
+            <td style="font-weight: bold; background: #f2f2f2;">Taxes*:</td>
+            <td style="text-align: right; font-weight: bold; background: #f2f2f2;">$ 0.00</td>
+          </tr>
+          <tr class="aws-total-highlight">
+            <td style="background: #e8e8e8; font-size: 14px;">Total due in US Dollars</td>
+            <td style="text-align: right; background: #e8e8e8; font-size: 14px;">${esc(b.summary.totalDueFormatted)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Official Platform Notes & Legal Footer -->
+      <div class="aws-invoice-footer-notes">
+        <p><em>*This is an official consolidated electronic billing statement generated by Cloud Catalog Platform.</em></p>
+        <p>All cloud web services are billed for use of ${providerConfig.name} (${providerConfig.serviceProvider.name}).</p>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
 loadAll();
+

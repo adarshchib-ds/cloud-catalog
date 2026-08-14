@@ -258,3 +258,28 @@ model VmPricing {
   @@map("vm_pricing")
 }
 
+enum AwsConnectionStatus {
+  PENDING
+  ACTIVE
+  FAILED
+}
+
+model AwsAccountConnection {
+  id                String              @id @default(uuid()) @db.VarChar(36)
+  userId            String?             @db.VarChar(36)
+  awsAccountId      String              @unique @db.VarChar(12)
+  externalId        String              @unique @db.VarChar(64)
+  roleArn           String              @db.VarChar(255)
+  status            AwsConnectionStatus @default(PENDING)
+  cachedProfileData Json?
+  cachedBillingData Json?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([awsAccountId])
+  @@index([externalId])
+  @@map("aws_account_connections")
+}
+
+
