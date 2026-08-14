@@ -212,20 +212,33 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
         }
       : undefined;
 
-  const costRes = await ceClient.send(
-    new GetCostAndUsageCommand({
-      TimePeriod: { Start: startOfMonth, End: endPeriod },
-      Granularity: 'MONTHLY',
-      Metrics: ['UnblendedCost'],
-      GroupBy: [{ Type: 'DIMENSION', Key: 'SERVICE' }],
-      Filter: queryFilter,
-    }),
-  );
+  let costRes: any = null;
+  try {
+    costRes = await ceClient.send(
+      new GetCostAndUsageCommand({
+        TimePeriod: { Start: startOfMonth, End: endPeriod },
+        Granularity: 'MONTHLY',
+        Metrics: ['UnblendedCost'],
+        GroupBy: [{ Type: 'DIMENSION', Key: 'SERVICE' }],
+        Filter: queryFilter,
+      }),
+    );
+  } catch (err: any) {
+    if (
+      err.message?.includes('not enabled for cost explorer') ||
+      err.message?.includes('Cost Explorer') ||
+      err.name === 'DataUnavailableException'
+    ) {
+      logger.warn(`AWS Cost Explorer notice for account ${accountInfo.accountID}: ${err.message}`);
+    } else {
+      throw err;
+    }
+  }
 
   let totalDue = 0;
   const servicesBreakdownTable: any[] = [];
 
-  const timeResults = costRes.ResultsByTime || [];
+  const timeResults = costRes?.ResultsByTime || [];
   if (timeResults.length > 0) {
     const latestPeriod = timeResults[timeResults.length - 1];
     const groups = latestPeriod.Groups || [];
@@ -246,11 +259,20 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
   }
 
   if (servicesBreakdownTable.length === 0) {
-    servicesBreakdownTable.push({
-      serviceName: 'No Active AWS Charges / Free Tier Usage',
-      amountDueFormatted: '$ 0.00',
-      amountRaw: 0,
-    });
+    if (!costRes) {
+      servicesBreakdownTable.push({
+        serviceName:
+          '⚠️ AWS Cost Explorer Disabled (Log into AWS Console -> Billing -> Cost Explorer to activate)',
+        amountDueFormatted: '$ 0.00',
+        amountRaw: 0,
+      });
+    } else {
+      servicesBreakdownTable.push({
+        serviceName: 'No Active AWS Charges / Free Tier Usage',
+        amountDueFormatted: '$ 0.00',
+        amountRaw: 0,
+      });
+    }
   }
 
   // Sort by highest cost first
