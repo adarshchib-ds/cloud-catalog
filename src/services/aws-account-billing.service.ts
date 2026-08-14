@@ -1,6 +1,10 @@
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { AccountClient, GetContactInformationCommand } from '@aws-sdk/client-account';
-import { CostExplorerClient, GetCostAndUsageCommand, GetDimensionValuesCommand } from '@aws-sdk/client-cost-explorer';
+import {
+  CostExplorerClient,
+  GetCostAndUsageCommand,
+  GetDimensionValuesCommand,
+} from '@aws-sdk/client-cost-explorer';
 import { OrganizationsClient, DescribeAccountCommand } from '@aws-sdk/client-organizations';
 import { logger } from '../config/logger';
 
@@ -15,7 +19,13 @@ export interface AwsCredentials {
 /**
  * Resolves credentials from passed params or environment variables.
  */
-function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): { accessKeyId: string; secretAccessKey: string; sessionToken?: string; region: string; accountId?: string } {
+function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  region: string;
+  accountId?: string;
+} {
   let accessKeyId = passedCredentials?.accessKeyId?.trim();
   let secretAccessKey = passedCredentials?.secretAccessKey?.trim();
   let sessionToken = passedCredentials?.sessionToken?.trim();
@@ -39,12 +49,13 @@ function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): { acce
   }
 
   if (!accessKeyId || !secretAccessKey) {
-    throw new Error('AWS credentials required. Please provide valid AWS Access Key ID and Secret Access Key.');
+    throw new Error(
+      'AWS credentials required. Please provide valid AWS Access Key ID and Secret Access Key.',
+    );
   }
 
   return { accessKeyId, secretAccessKey, sessionToken, region, accountId };
 }
-
 
 /**
  * Fetches AWS Account Identity & Customer Contact Details.
@@ -97,7 +108,9 @@ export async function getAwsAccountInfo(passedCredentials?: Partial<AwsCredentia
   if (credentials.accountId && credentials.accountId !== callerRes.Account) {
     try {
       const orgClient = new OrganizationsClient({ region: 'us-east-1', credentials: awsCreds });
-      const orgRes = await orgClient.send(new DescribeAccountCommand({ AccountId: credentials.accountId }));
+      const orgRes = await orgClient.send(
+        new DescribeAccountCommand({ AccountId: credentials.accountId }),
+      );
       if (orgRes.Account?.Name) {
         orgAccountName = orgRes.Account.Name;
       }
@@ -107,10 +120,13 @@ export async function getAwsAccountInfo(passedCredentials?: Partial<AwsCredentia
   }
 
   // If a specific target Account ID was requested (different from server credentials account)
-  const isTargetAccountIdPassed = credentials.accountId && credentials.accountId !== callerRes.Account;
-  const displayName = orgAccountName 
-    ? `AWS Account: ${orgAccountName} (${accountID})` 
-    : (isTargetAccountIdPassed ? `AWS Account Owner (${accountID})` : (customerContact.FullName || customerContact.CompanyName || 'AWS Account Owner'));
+  const isTargetAccountIdPassed =
+    credentials.accountId && credentials.accountId !== callerRes.Account;
+  const displayName = orgAccountName
+    ? `AWS Account: ${orgAccountName} (${accountID})`
+    : isTargetAccountIdPassed
+      ? `AWS Account Owner (${accountID})`
+      : customerContact.FullName || customerContact.CompanyName || 'AWS Account Owner';
 
   return {
     accountID: accountID,
@@ -129,7 +145,6 @@ export async function getAwsAccountInfo(passedCredentials?: Partial<AwsCredentia
   };
 }
 
-
 /**
  * Fetches & Formats AWS Invoice Billing Breakdown.
  */
@@ -144,7 +159,7 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
   const year = targetDate.getFullYear();
   const month = targetDate.getMonth();
   const startOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-  
+
   const tomorrow = new Date(targetDate);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const endPeriod = tomorrow.toISOString().split('T')[0];
@@ -170,10 +185,12 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
           TimePeriod: { Start: startOfMonth, End: endPeriod },
           Dimension: 'LINKED_ACCOUNT',
           SearchString: credentials.accountId,
-        })
+        }),
       );
       if (!checkRes.DimensionValues || checkRes.DimensionValues.length === 0) {
-        throw new Error(`AWS Account ID '${credentials.accountId}' was not found or is not associated with your AWS billing credentials.`);
+        throw new Error(
+          `AWS Account ID '${credentials.accountId}' was not found or is not associated with your AWS billing credentials.`,
+        );
       }
     } catch (err: any) {
       if (err.message.includes('was not found')) {
@@ -183,15 +200,17 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
     }
   }
 
-  const isAssumedRoleSameAccount = credentials.accountId && accountInfo.callerAccount === credentials.accountId;
-  const queryFilter: any = (credentials.accountId && !isAssumedRoleSameAccount)
-    ? {
-        Dimensions: {
-          Key: 'LINKED_ACCOUNT',
-          Values: [credentials.accountId],
-        },
-      }
-    : undefined;
+  const isAssumedRoleSameAccount =
+    credentials.accountId && accountInfo.callerAccount === credentials.accountId;
+  const queryFilter: any =
+    credentials.accountId && !isAssumedRoleSameAccount
+      ? {
+          Dimensions: {
+            Key: 'LINKED_ACCOUNT',
+            Values: [credentials.accountId],
+          },
+        }
+      : undefined;
 
   const costRes = await ceClient.send(
     new GetCostAndUsageCommand({
@@ -262,7 +281,6 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
   };
 }
 
-
 /**
  * Deliverable C1: Generates 1-Click CloudFormation Quick-Create Link & External ID.
  */
@@ -290,7 +308,8 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
     externalId = crypto.randomUUID();
   }
 
-  const s3PublicUrl = 'https://cloudcatalog-templates-public-2026.s3.amazonaws.com/cloudcatalog-role.yaml';
+  const s3PublicUrl =
+    'https://cloudcatalog-templates-public-2026.s3.amazonaws.com/cloudcatalog-role.yaml';
   const s3TemplateUrl = encodeURIComponent(s3PublicUrl);
 
   const quickCreateUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?stackName=CloudCatalog-Integration&templateURL=${s3TemplateUrl}&param_SaaSAccountId=${saasAccountId}&param_ExternalId=${externalId}&filteringCapabilities=CAPABILITY_NAMED_IAM`;
@@ -329,7 +348,11 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
 /**
  * Deliverable C2: AssumeRole STS Authentication & 24h Cached Billing/Profile Ingestion.
  */
-export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRefresh: boolean = false, passedExternalId?: string) {
+export async function fetchBillingWithAssumedRole(
+  awsAccountId: string,
+  forceRefresh: boolean = false,
+  passedExternalId?: string,
+) {
   let connectionRecord: any = null;
 
   try {
@@ -342,13 +365,20 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
   }
 
   // 1. Check 24-Hour Cache
-  if (!forceRefresh && connectionRecord && connectionRecord.lastSyncedAt && connectionRecord.cachedBillingData) {
+  if (
+    !forceRefresh &&
+    connectionRecord &&
+    connectionRecord.lastSyncedAt &&
+    connectionRecord.cachedBillingData
+  ) {
     const now = new Date();
     const lastSynced = new Date(connectionRecord.lastSyncedAt);
     const diffHours = (now.getTime() - lastSynced.getTime()) / (1000 * 60 * 60);
 
     if (diffHours < 24) {
-      logger.info(`Returning 24-hour cached billing payload ($0.00 AWS API cost) for account ${awsAccountId}`);
+      logger.info(
+        `Returning 24-hour cached billing payload ($0.00 AWS API cost) for account ${awsAccountId}`,
+      );
       return {
         status: connectionRecord.status,
         cached: true,
@@ -361,7 +391,8 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
 
   // 2. Prepare AssumeRole Credentials
   const externalId = passedExternalId || connectionRecord?.externalId || `ext-${awsAccountId}`;
-  let roleArn = connectionRecord?.roleArn || `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
+  let roleArn =
+    connectionRecord?.roleArn || `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
 
   const serverAccessKey = process.env.AWS_ACCESS_KEY_ID;
   const serverSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
@@ -386,7 +417,7 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
           RoleSessionName: 'CloudCatalogSyncSession',
           ExternalId: externalId,
           DurationSeconds: 3600,
-        })
+        }),
       );
     } catch (err: any) {
       const fallbackRoleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
@@ -397,7 +428,7 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
           RoleSessionName: 'CloudCatalogSyncSession',
           ExternalId: externalId,
           DurationSeconds: 3600,
-        })
+        }),
       );
       roleArn = fallbackRoleArn;
     }
@@ -455,4 +486,3 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
     billing: liveBilling,
   };
 }
-

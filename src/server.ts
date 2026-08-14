@@ -36,7 +36,6 @@ async function startServer(): Promise<void> {
 
     const app = createApp();
 
-
     const server = app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`, {
         environment: env.NODE_ENV,

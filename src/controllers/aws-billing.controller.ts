@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { getAwsAccountInfo, getAwsAccountBilling, generateConnectLink, fetchBillingWithAssumedRole } from '@services/aws-account-billing.service';
+import {
+  getAwsAccountInfo,
+  getAwsAccountBilling,
+  generateConnectLink,
+  fetchBillingWithAssumedRole,
+} from '@services/aws-account-billing.service';
 
 /**
  * Controller handler for GET/POST /api/v1/aws/account-info
@@ -61,7 +66,11 @@ export async function generateConnectLinkHandler(req: Request, res: Response, ne
 /**
  * Deliverable C2: POST /api/v1/aws/fetch-billing (with 24h cache & AssumeRole)
  */
-export async function fetchBillingCrossAccountHandler(req: Request, res: Response, _next: NextFunction) {
+export async function fetchBillingCrossAccountHandler(
+  req: Request,
+  res: Response,
+  _next: NextFunction,
+) {
   try {
     const { aws_account_id, external_id, force_refresh } = req.body;
     if (!aws_account_id || !/^\d{12}$/.test(String(aws_account_id).trim())) {
@@ -71,7 +80,11 @@ export async function fetchBillingCrossAccountHandler(req: Request, res: Respons
       });
       return;
     }
-    const result = await fetchBillingWithAssumedRole(String(aws_account_id).trim(), Boolean(force_refresh), external_id ? String(external_id).trim() : undefined);
+    const result = await fetchBillingWithAssumedRole(
+      String(aws_account_id).trim(),
+      Boolean(force_refresh),
+      external_id ? String(external_id).trim() : undefined,
+    );
     res.status(200).json({
       success: true,
       data: result,
@@ -81,7 +94,9 @@ export async function fetchBillingCrossAccountHandler(req: Request, res: Respons
       success: false,
       error: {
         code: 'AWS_CROSS_ACCOUNT_ERROR',
-        message: error.message || 'AccessDenied: CloudFormation stack creation or IAM role propagation is still in progress in AWS. Please wait 15-30 seconds and try again.',
+        message:
+          error.message ||
+          'AccessDenied: CloudFormation stack creation or IAM role propagation is still in progress in AWS. Please wait 15-30 seconds and try again.',
       },
     });
   }

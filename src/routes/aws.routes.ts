@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { 
-  getAccountInfoHandler, 
-  getAccountBillingHandler, 
-  generateConnectLinkHandler, 
-  fetchBillingCrossAccountHandler 
+import {
+  getAccountInfoHandler,
+  getAccountBillingHandler,
+  generateConnectLinkHandler,
+  fetchBillingCrossAccountHandler,
 } from '@controllers/aws-billing.controller';
 import { validate } from '../middleware/validate';
 import { awsBillingRequestSchema } from '../validators/aws-billing.validator';

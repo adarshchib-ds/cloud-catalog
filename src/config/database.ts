@@ -35,10 +35,9 @@ export async function connectDatabase(): Promise<void> {
     await prisma.$connect();
     logger.info('Database connection established successfully');
   } catch (error: any) {
-    logger.warn(`Database notice: ${error.message || 'Can\'t reach database server'}`);
+    logger.warn(`Database notice: ${error.message || "Can't reach database server"}`);
   }
 }
-
 
 export async function disconnectDatabase(): Promise<void> {
   try {
