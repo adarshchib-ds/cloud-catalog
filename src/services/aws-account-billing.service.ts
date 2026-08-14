@@ -7,6 +7,7 @@ import { logger } from '../config/logger';
 export interface AwsCredentials {
   accessKeyId?: string;
   secretAccessKey?: string;
+  sessionToken?: string;
   region?: string;
   accountId?: string;
 }
@@ -14,9 +15,10 @@ export interface AwsCredentials {
 /**
  * Resolves credentials from passed params or environment variables.
  */
-function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): { accessKeyId: string; secretAccessKey: string; region: string; accountId?: string } {
+function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): { accessKeyId: string; secretAccessKey: string; sessionToken?: string; region: string; accountId?: string } {
   let accessKeyId = passedCredentials?.accessKeyId?.trim();
   let secretAccessKey = passedCredentials?.secretAccessKey?.trim();
+  let sessionToken = passedCredentials?.sessionToken?.trim();
   const region = passedCredentials?.region?.trim() || 'us-east-1';
   let accountId = passedCredentials?.accountId?.trim();
 
@@ -33,13 +35,14 @@ function resolveCredentials(passedCredentials?: Partial<AwsCredentials>): { acce
     // If no credentials passed, fall back to process.env ONLY if explicitly set
     accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    sessionToken = process.env.AWS_SESSION_TOKEN;
   }
 
   if (!accessKeyId || !secretAccessKey) {
     throw new Error('AWS credentials required. Please provide valid AWS Access Key ID and Secret Access Key.');
   }
 
-  return { accessKeyId, secretAccessKey, region, accountId };
+  return { accessKeyId, secretAccessKey, sessionToken, region, accountId };
 }
 
 
@@ -50,7 +53,11 @@ export async function getAwsAccountInfo(passedCredentials?: Partial<AwsCredentia
   const credentials = resolveCredentials(passedCredentials);
   logger.info('Fetching AWS Account & Customer Profile Info...');
 
-  const awsCreds = { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey };
+  const awsCreds = {
+    accessKeyId: credentials.accessKeyId,
+    secretAccessKey: credentials.secretAccessKey,
+    ...(credentials.sessionToken ? { sessionToken: credentials.sessionToken } : {}),
+  };
 
   let accountID = credentials.accountId || '';
   let userArn = '';
@@ -143,13 +150,19 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
   const endPeriod = tomorrow.toISOString().split('T')[0];
   const todayStr = targetDate.toISOString().split('T')[0];
 
+  const awsCreds = {
+    accessKeyId: credentials.accessKeyId,
+    secretAccessKey: credentials.secretAccessKey,
+    ...(credentials.sessionToken ? { sessionToken: credentials.sessionToken } : {}),
+  };
+
   // Query AWS Cost Explorer
   const ceClient = new CostExplorerClient({
     region: 'us-east-1',
-    credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey },
+    credentials: awsCreds,
   });
 
-  // Verify target Account ID existence if target account ID is specified
+  // Verify target Account ID existence if target account ID is specified and different from caller
   if (credentials.accountId && credentials.accountId !== accountInfo.callerAccount) {
     try {
       const checkRes = await ceClient.send(
@@ -170,7 +183,8 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
     }
   }
 
-  const queryFilter: any = credentials.accountId
+  const isAssumedRoleSameAccount = credentials.accountId && accountInfo.callerAccount === credentials.accountId;
+  const queryFilter: any = (credentials.accountId && !isAssumedRoleSameAccount)
     ? {
         Dimensions: {
           Key: 'LINKED_ACCOUNT',
@@ -254,14 +268,32 @@ export async function getAwsAccountBilling(passedCredentials?: Partial<AwsCreden
  */
 export async function generateConnectLink(awsAccountId: string, userId?: string) {
   const crypto = await import('crypto');
-  const externalId = crypto.randomUUID();
-  const roleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalog-CostSync-Role-${externalId}`;
-  const saasAccountId = process.env.AWS_SAAS_ACCOUNT_ID || '58298302238';
-  // Public raw URL for the CloudFormation template
-  const rawTemplateUrl = 'https://raw.githubusercontent.com/adarshchib-ds/cloud-catalog/main/templates/cloudcatalog-role.yaml';
-  const s3TemplateUrl = encodeURIComponent(rawTemplateUrl);
+  const saasAccountId = (process.env.AWS_SAAS_ACCOUNT_ID || '582983022238').trim();
+  const roleArn = `arn:aws:iam::${awsAccountId.trim()}:role/CloudCatalogCostSyncRole`;
 
-  const quickCreateUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?stackName=CloudCatalog-Integration&templateURL=${s3TemplateUrl}&param_SaaSAccountId=${saasAccountId}&param_ExternalId=${externalId}`;
+  let externalId: string = '';
+
+  // Try checking existing connection record from database if prisma is configured
+  try {
+    const { prisma } = await import('../config/database');
+    const existing = await (prisma as any).awsAccountConnection.findUnique({
+      where: { awsAccountId },
+    });
+    if (existing && existing.externalId) {
+      externalId = existing.externalId;
+    }
+  } catch (err: any) {
+    logger.info(`Prisma read notice: ${err.message}`);
+  }
+
+  if (!externalId) {
+    externalId = crypto.randomUUID();
+  }
+
+  const s3PublicUrl = 'https://cloudcatalog-templates-public-2026.s3.amazonaws.com/cloudcatalog-role.yaml';
+  const s3TemplateUrl = encodeURIComponent(s3PublicUrl);
+
+  const quickCreateUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?stackName=CloudCatalog-Integration&templateURL=${s3TemplateUrl}&param_SaaSAccountId=${saasAccountId}&param_ExternalId=${externalId}&filteringCapabilities=CAPABILITY_NAMED_IAM`;
 
   // Try saving connection record to database if prisma is configured
   try {
@@ -297,7 +329,7 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
 /**
  * Deliverable C2: AssumeRole STS Authentication & 24h Cached Billing/Profile Ingestion.
  */
-export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRefresh: boolean = false) {
+export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRefresh: boolean = false, passedExternalId?: string) {
   let connectionRecord: any = null;
 
   try {
@@ -328,8 +360,8 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
   }
 
   // 2. Prepare AssumeRole Credentials
-  const externalId = connectionRecord?.externalId || `ext-${awsAccountId}`;
-  const roleArn = connectionRecord?.roleArn || `arn:aws:iam::${awsAccountId}:role/CloudCatalog-CostSync-Role-${externalId}`;
+  const externalId = passedExternalId || connectionRecord?.externalId || `ext-${awsAccountId}`;
+  let roleArn = connectionRecord?.roleArn || `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
 
   const serverAccessKey = process.env.AWS_ACCESS_KEY_ID;
   const serverSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
@@ -346,14 +378,29 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
   let assumedCredentials: any;
   try {
     const { AssumeRoleCommand } = await import('@aws-sdk/client-sts');
-    const assumeRes = await stsClient.send(
-      new AssumeRoleCommand({
-        RoleArn: roleArn,
-        RoleSessionName: 'CloudCatalogSyncSession',
-        ExternalId: externalId,
-        DurationSeconds: 3600,
-      })
-    );
+    let assumeRes;
+    try {
+      assumeRes = await stsClient.send(
+        new AssumeRoleCommand({
+          RoleArn: roleArn,
+          RoleSessionName: 'CloudCatalogSyncSession',
+          ExternalId: externalId,
+          DurationSeconds: 3600,
+        })
+      );
+    } catch (err: any) {
+      const fallbackRoleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
+      logger.info(`Trying fallback Role ARN: ${fallbackRoleArn}`);
+      assumeRes = await stsClient.send(
+        new AssumeRoleCommand({
+          RoleArn: fallbackRoleArn,
+          RoleSessionName: 'CloudCatalogSyncSession',
+          ExternalId: externalId,
+          DurationSeconds: 3600,
+        })
+      );
+      roleArn = fallbackRoleArn;
+    }
 
     if (!assumeRes.Credentials?.AccessKeyId || !assumeRes.Credentials?.SecretAccessKey) {
       throw new Error('Failed to acquire temporary STS session credentials.');
@@ -368,7 +415,7 @@ export async function fetchBillingWithAssumedRole(awsAccountId: string, forceRef
     };
   } catch (err: any) {
     logger.error(`STS AssumeRole AccessDenied for ${awsAccountId}: ${err.message}`);
-    throw new Error('AccessDenied: CloudFormation stack creation is still in progress in AWS or role permissions are missing.');
+    throw new Error(`AccessDenied: ${err.message}`);
   }
 
   // 3. Fetch Live Billing with Assumed Role Credentials

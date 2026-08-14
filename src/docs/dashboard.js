@@ -1431,7 +1431,7 @@ const PROVIDER_CONFIG = {
     },
     labels: {
       accountId: 'AWS Account ID (Optional)',
-      accountIdPlaceholder: '12-digit AWS Account ID (e.g. 582983022238)',
+      accountIdPlaceholder: '12-digit AWS Account ID (e.g. 123456789012)',
       accessKeyId: 'AWS Access Key ID (Optional)',
       secretAccessKey: 'AWS Secret Access Key (Optional)',
       region: 'Target Region'
@@ -1613,50 +1613,55 @@ async function fetchAwsBillingData() {
   }
 }
 
-async function renderCloudFormationConnectCard(awsAccountId, errorMsg) {
+async function renderCloudFormationConnectCard(awsAccountId, errorMsg, existingLinkData) {
   const container = document.getElementById('billing-results');
-  container.innerHTML = `
-    <div class="loading">
-      <div class="loading-spinner"></div>
-      <p>Generating 1-Click CloudFormation Launch Link for Account ${esc(awsAccountId)}...</p>
-    </div>
-  `;
+  if (!existingLinkData) {
+    container.innerHTML = `
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <p>Generating 1-Click CloudFormation Launch Link for Account ${esc(awsAccountId)}...</p>
+      </div>
+    `;
+  }
 
   try {
-    const res = await fetch(`${BACKEND_URL}/api/v1/aws/generate-connect-link`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aws_account_id: awsAccountId })
-    });
-    const result = await res.json();
+    let linkData = existingLinkData;
+    if (!linkData) {
+      const res = await fetch(`${BACKEND_URL}/api/v1/aws/generate-connect-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aws_account_id: awsAccountId })
+      });
+      const result = await res.json();
 
-    if (!result.success || !result.data) {
-      throw new Error(result.error?.message || 'Failed to generate CloudFormation connect link');
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message || 'Failed to generate CloudFormation connect link');
+      }
+      linkData = result.data;
     }
+      window.lastCloudCatalogConnectLink = linkData;
+      container.innerHTML = `
+        <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 24px; color: #f8fafc; font-family: sans-serif;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <h3 style="margin: 0; color: #818cf8; font-size: 1.25rem;">🚀 Connect AWS Account ${esc(awsAccountId)}</h3>
+            <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;">
+              Zero Secrets • Read-Only IAM • $0 Customer Cost
+            </span>
+          </div>
+          
+          <p style="color: #94a3b8; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
+            ${errorMsg ? `<strong style="color: #f87171;">Note:</strong> ${esc(errorMsg)}<br>` : ''}
+            To grant Cloud Catalog secure, read-only access to ingest billing & owner profile data for account <strong>${esc(awsAccountId)}</strong>, click the 1-Click Stack button below to create a free IAM role in your AWS Console.
+          </p>
 
-    const linkData = result.data;
-    container.innerHTML = `
-      <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 24px; color: #f8fafc; font-family: sans-serif;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-          <h3 style="margin: 0; color: #818cf8; font-size: 1.25rem;">🚀 Connect AWS Account ${esc(awsAccountId)}</h3>
-          <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;">
-            Zero Secrets • Read-Only IAM • $0 Customer Cost
-          </span>
-        </div>
-        
-        <p style="color: #94a3b8; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
-          ${errorMsg ? `<strong style="color: #f87171;">Note:</strong> ${esc(errorMsg)}<br>` : ''}
-          To grant Cloud Catalog secure, read-only access to ingest billing & owner profile data for account <strong>${esc(awsAccountId)}</strong>, click the 1-Click Stack button below to create a free IAM role in your AWS Console.
-        </p>
-
-        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;">
-          <a href="${esc(linkData.quick_create_url)}" target="_blank" rel="noopener" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
-            <span>🚀 Launch 1-Click AWS Stack</span> &#8599;
-          </a>
-          <button onclick="verifyAndFetchAssumedRoleBilling('${esc(awsAccountId)}')" style="background: #1e293b; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
-            🔄 Verify & Fetch Billing Data
-          </button>
-        </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;">
+            <a href="${esc(linkData.quick_create_url)}" target="_blank" rel="noopener" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
+              <span>🚀 Launch 1-Click AWS Stack</span> &#8599;
+            </a>
+            <button onclick="verifyAndFetchAssumedRoleBilling('${esc(awsAccountId)}', window.lastCloudCatalogConnectLink)" style="background: #1e293b; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+              🔄 Verify & Fetch Billing Data
+            </button>
+          </div>
 
         <div style="font-size: 0.8rem; color: #64748b; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px;">
           🔒 <strong>Security Guarantee:</strong> Cloud Catalog uses AWS STS ExternalId (<code>${esc(linkData.external_id)}</code>) to prevent confused deputy attacks. Your static credentials are never shared or stored.
@@ -1673,7 +1678,7 @@ async function renderCloudFormationConnectCard(awsAccountId, errorMsg) {
   }
 }
 
-async function verifyAndFetchAssumedRoleBilling(awsAccountId) {
+async function verifyAndFetchAssumedRoleBilling(awsAccountId, linkData) {
   const container = document.getElementById('billing-results');
   container.innerHTML = `
     <div class="loading">
@@ -1683,10 +1688,15 @@ async function verifyAndFetchAssumedRoleBilling(awsAccountId) {
   `;
 
   try {
+    const bodyPayload = { aws_account_id: awsAccountId, force_refresh: false };
+    if (linkData && linkData.external_id) {
+      bodyPayload.external_id = linkData.external_id;
+    }
+
     const res = await fetch(`${BACKEND_URL}/api/v1/aws/fetch-billing`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aws_account_id: awsAccountId, force_refresh: false })
+      body: JSON.stringify(bodyPayload)
     });
     const result = await res.json();
 
@@ -1697,13 +1707,14 @@ async function verifyAndFetchAssumedRoleBilling(awsAccountId) {
     const payload = result.data;
     renderCloudCatalogInvoiceCard(payload.billing, 'aws');
   } catch (err) {
-    renderCloudFormationConnectCard(awsAccountId, err.message);
+    renderCloudFormationConnectCard(awsAccountId, err.message, linkData);
   }
 }
 
-function renderCloudCatalogInvoiceCard(b, providerKey) {
+function renderCloudCatalogInvoiceCard(data, providerKey) {
   const container = document.getElementById('billing-results');
   const providerConfig = PROVIDER_CONFIG[providerKey] || PROVIDER_CONFIG.aws;
+  const b = (data && data.billing) ? data.billing : (data || {});
 
   const rowsHtml = (b.servicesBreakdownTable || []).map(s => `
     <tr>
@@ -1712,7 +1723,9 @@ function renderCloudCatalogInvoiceCard(b, providerKey) {
     </tr>
   `).join('');
 
-  const invoiceNo = `INV-${b.invoiceHeader.accountID.slice(-6)}-${b.invoiceHeader.statementDate.replace(/-/g, '')}`;
+  const accountIdStr = String(b.invoiceHeader?.accountID || '');
+  const invoiceNo = `INV-${accountIdStr.slice(-6)}-${(b.invoiceHeader?.statementDate || '').replace(/-/g, '')}`;
+  const addressDetails = [b.billTo?.addressLine1, b.billTo?.cityStateZip, b.billTo?.country].filter(Boolean).filter(s => s !== 'N/A' && s.trim().length > 0).join('<br>') || 'Default Billing Profile';
 
   const html = `
     <div class="cc-invoice-card">
