@@ -5,6 +5,8 @@ Parameters:
   SaaSAccountId:
     Type: String
     Default: '582983022238'
+    AllowedPattern: '^[0-9]{12}$'
+    ConstraintDescription: 'AWS Account ID must be exactly 12 digits.'
     Description: 'The Cloud Catalog SaaS Platform AWS Account ID authorized to assume this read-only role.'
   ExternalId:
     Type: String
@@ -14,7 +16,7 @@ Resources:
   CloudCatalogCostSyncRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub 'CloudCatalog-CostSync-Role-${ExternalId}'
+      RoleName: CloudCatalogCostSyncRole
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
