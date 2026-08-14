@@ -256,8 +256,9 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
   const crypto = await import('crypto');
   const externalId = crypto.randomUUID();
   const roleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalog-CostSync-Role-${externalId}`;
-  const saasAccountId = process.env.AWS_SAAS_ACCOUNT_ID || '58298302238';
-  const s3TemplateUrl = encodeURIComponent('https://s3.amazonaws.com/cloudcatalog-templates/cloudcatalog-role.yaml');
+  // Public raw URL for the CloudFormation template
+  const rawTemplateUrl = 'https://raw.githubusercontent.com/adarshchib-ds/cloud-catalog/main/templates/cloudcatalog-role.yaml';
+  const s3TemplateUrl = encodeURIComponent(rawTemplateUrl);
 
   const quickCreateUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?stackName=CloudCatalog-Integration&templateURL=${s3TemplateUrl}&param_SaaSAccountId=${saasAccountId}&param_ExternalId=${externalId}`;
 
