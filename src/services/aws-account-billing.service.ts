@@ -256,6 +256,7 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
   const crypto = await import('crypto');
   const externalId = crypto.randomUUID();
   const roleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalog-CostSync-Role-${externalId}`;
+  const saasAccountId = process.env.AWS_SAAS_ACCOUNT_ID || '58298302238';
   // Public raw URL for the CloudFormation template
   const rawTemplateUrl = 'https://raw.githubusercontent.com/adarshchib-ds/cloud-catalog/main/templates/cloudcatalog-role.yaml';
   const s3TemplateUrl = encodeURIComponent(rawTemplateUrl);
