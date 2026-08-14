@@ -310,7 +310,7 @@ export async function generateConnectLink(awsAccountId: string, userId?: string)
 
   const s3PublicUrl =
     process.env.AWS_TEMPLATE_URL ||
-    'https://raw.githubusercontent.com/adarshchib-ds/cloud-catalog/main/templates/cloudcatalog-role.yaml';
+    'https://cloudcatalog-templates-public-2026.s3.amazonaws.com/cloudcatalog-role.yaml';
   const s3TemplateUrl = encodeURIComponent(s3PublicUrl);
 
   const quickCreateUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?stackName=CloudCatalog-Integration&templateURL=${s3TemplateUrl}&param_SaaSAccountId=${saasAccountId}&param_ExternalId=${externalId}&filteringCapabilities=CAPABILITY_NAMED_IAM`;
