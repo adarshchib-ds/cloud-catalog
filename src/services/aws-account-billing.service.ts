@@ -420,9 +420,11 @@ export async function fetchBillingWithAssumedRole(
           DurationSeconds: 3600,
         }),
       );
-    } catch (err: any) {
+    } catch (_err: any) {
       const fallbackRoleArn = `arn:aws:iam::${awsAccountId}:role/CloudCatalogCostSyncRole`;
-      logger.info(`Trying fallback Role ARN: ${fallbackRoleArn}`);
+      logger.info(
+        `Initial AssumeRole attempt failed, trying fallback Role ARN: ${fallbackRoleArn}`,
+      );
       assumeRes = await stsClient.send(
         new AssumeRoleCommand({
           RoleArn: fallbackRoleArn,
