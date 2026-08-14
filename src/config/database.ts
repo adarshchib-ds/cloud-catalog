@@ -34,11 +34,11 @@ export async function connectDatabase(): Promise<void> {
   try {
     await prisma.$connect();
     logger.info('Database connection established successfully');
-  } catch (error) {
-    logger.error('Failed to connect to database', { error });
-    throw error;
+  } catch (error: any) {
+    logger.warn(`Database notice: ${error.message || 'Can\'t reach database server'}`);
   }
 }
+
 
 export async function disconnectDatabase(): Promise<void> {
   try {

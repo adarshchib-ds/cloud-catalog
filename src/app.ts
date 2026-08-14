@@ -10,6 +10,8 @@ import { requestLogger } from '@middleware/requestLogger';
 import { errorHandler } from '@middleware/errorHandler';
 import { healthRoutes } from '@routes/health.routes';
 import { instanceRoutes } from '@routes/instance.routes';
+import { awsRoutes } from '@routes/aws.routes';
+
 
 const swaggerOptions: Options = {
   definition: {
@@ -76,6 +78,8 @@ export function createApp(): Application {
   app.use('/instances', instanceRoutes);
   app.use(`${apiPrefix}/instances`, instanceRoutes);
   app.use(`${apiPrefix}/health`, healthRoutes);
+  app.use(`${apiPrefix}/aws`, awsRoutes);
+
 
   // Task 2: Lightweight Health Check Probe Endpoint (Kubernetes / Load Balancer)
   app.get('/healthz', (_req, res) => {

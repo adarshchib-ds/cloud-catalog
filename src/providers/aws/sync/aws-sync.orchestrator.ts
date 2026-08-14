@@ -393,6 +393,7 @@ export async function syncAws(): Promise<void> {
           const chunk = updates.slice(i, i + chunkSize);
           await prisma.$transaction(
             chunk.map(([id, data]) =>
+              
               prisma.vmInstance.update({
                 where: { id },
                 data,

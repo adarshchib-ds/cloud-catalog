@@ -4,8 +4,13 @@ import { ZodSchema, ZodError } from 'zod';
 export function validate(schema: ZodSchema, source: 'body' | 'query' | 'params' = 'body') {
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
-      const data = schema.parse(req[source]);
-      req[source] = data;
+      const payload = source === 'body' ? { ...req.query, ...req.body } : req[source];
+      const data = schema.parse(payload);
+      if (source === 'body') {
+        req.body = data;
+      } else {
+        req[source] = data;
+      }
       next();
     } catch (error) {
       if (error instanceof ZodError) {
@@ -20,3 +25,4 @@ export function validate(schema: ZodSchema, source: 'body' | 'query' | 'params' 
     }
   };
 }
+
